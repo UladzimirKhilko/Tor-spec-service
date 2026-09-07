@@ -194,14 +194,73 @@ function buildChannelLayoutMarking(channelLayout, passesCount) {
   return Array(passes).fill(block).join('+');
 }
 
+// ---------------------------------------------------------------------------
+// МОНОБЛОК (исполнение 2хБГВ/3хБГВ — "блок горячей воды", две ступени
+// нагрева в одном корпусе). Спецификация BelTO "МоноБлок" отличается от
+// обычной тем, что вместо пары значений "греющий | нагреваемый" в строках
+// рабочих параметров стоят ЧЕТЫРЕ (шапка "Cтупень | I | II | I | II":
+// греющий I, греющий II, нагреваемый I, нагреваемый II), а в блоке
+// "Характеристики" (мощность, поверхность, запас, коэффициенты) — ДВА
+// (по ступеням I и II). Эти правила заменяют одноимённые обычные правила,
+// когда текст опознан как моноблок (см. isMonoblockText). Ключи с суффиксами
+// _s1/_s2 — ступени I/II В ПОРЯДКЕ СПЕЦИФИКАЦИИ; перестановку "II слева,
+// I справа" (как в бланке) делает fieldMap.js.
+//
+// Для HTML-отчёта эти же значения дополнительно (и точнее) достаются прямо
+// из ячеек таблицы — parseBeltoHtmlStructured в extract.js.
+const MONOBLOCK_LINES = [
+  { label: /[ТП]емператур\S*\s+(?:на\s+)?Вход\S*/i, valuesCount: 4, keys: ['t_in_s1_hot', 't_in_s2_hot', 't_in_s1_cold', 't_in_s2_cold'] },
+  { label: /[ТП]емператур\S*\s+(?:на\s+)?Выход\S*/i, valuesCount: 4, keys: ['t_out_s1_hot', 't_out_s2_hot', 't_out_s1_cold', 't_out_s2_cold'] },
+  { label: /Массов\S*\s+Расход/i, valuesCount: 4, keys: ['flow_s1_hot', 'flow_s2_hot', 'flow_s1_cold', 'flow_s2_cold'], unitKey: 'flow_unit' },
+  { label: /Потер\S*\s+Напор\S*/i, valuesCount: 4, keys: ['dp_s1_hot', 'dp_s2_hot', 'dp_s1_cold', 'dp_s2_cold'], unitKey: 'dp_unit' },
+  { label: /[ТП]епловая\s+Мо[щш]ность/i, valuesCount: 2, keys: ['heat_power_s1', 'heat_power_s2'], unitKey: 'heat_load_unit' },
+  { label: /Поверхность\s+[ТП]еплообмена/i, valuesCount: 2, keys: ['heat_surface_s1', 'heat_surface_s2'] },
+  { label: /(?:Запас|Валас|Banac|3anac|3апас)\s*(?:по|no)?\s*Поверхн\S*/i, valuesCount: 2, keys: ['surface_margin_s1', 'surface_margin_s2'] },
+  { label: /Коэф-?т\s+[ТП]еплопередачи\s+Факт\S*/i, valuesCount: 2, keys: ['heat_transfer_coef_actual_s1', 'heat_transfer_coef_actual_s2'] },
+  { label: /Коэф-?т\s+[ТП]еплопередачи\s+Необходим\S*/i, valuesCount: 2, keys: ['heat_transfer_coef_required_s1', 'heat_transfer_coef_required_s2'] },
+  // Раскладка каналов у моноблока — по ступеням: "33 LL | 24 LL | 33 LL | 24 LL"
+  // (греющий I, греющий II, нагреваемый I, нагреваемый II; контуры дублируют
+  // друг друга) — берём первые две группы.
+  { label: /Раскладка\s+Канал\S*\D*(\d{1,3}\s*[A-Za-zА-Яа-я]{1,4}(?:\s*\+\s*\d{1,3}\s*[A-Za-zА-Яа-я]{1,4})*)\s+(\d{1,3}\s*[A-Za-zА-Яа-я]{1,4}(?:\s*\+\s*\d{1,3}\s*[A-Za-zА-Яа-я]{1,4})*)/i, kind: 'channel_layout_stages' },
+];
+// Правила из обычного набора, которые у моноблока ЗАМЕНЯЮТСЯ (по ключам
+// результата) — остальные (модель, среда, пластины, ходы, DN, вес) общие.
+const MONOBLOCK_REPLACED_KEYS = new Set([
+  't_in_hot', 't_out_hot', 'flow_hot', 'dp_hot', 'heat_power', 'heat_surface',
+  'surface_margin', 'heat_transfer_coef_actual', 'heat_transfer_coef_required',
+]);
+
+function isMonoblockText(text) {
+  // "Спецификация МоноБлок" в заголовке и/или шапка "Cтупень | I | II"
+  // (в отчёте BelTO первая буква — латинская "C", подстраховываемся обоими).
+  return /Моно\s*Блок/i.test(text) || /[CС]тупень\s+I\b/i.test(text);
+}
+
 function parseBeltoText(rawText) {
   const lines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const result = {};
   const debugMatches = [];
+  const monoblock = isMonoblockText(rawText);
+  if (monoblock) result.is_monoblock = true;
+
+  const rules = monoblock
+    ? BELTO_LINES.filter((r) => !(r.keys && r.keys.some((k) => MONOBLOCK_REPLACED_KEYS.has(k))) && r.kind !== 'channel_layout')
+        .concat(MONOBLOCK_LINES)
+    : BELTO_LINES;
 
   for (const line of lines) {
-    for (const rule of BELTO_LINES) {
+    for (const rule of rules) {
       if (!rule.label.test(line)) continue;
+
+      if (rule.kind === 'channel_layout_stages') {
+        const m = line.match(rule.label);
+        if (m && m[1] && m[2]) {
+          result.channel_layout_s1 = normalizeChannelLayoutBlock(m[1]);
+          result.channel_layout_s2 = normalizeChannelLayoutBlock(m[2]);
+          debugMatches.push({ line, keys: ['channel_layout_s1', 'channel_layout_s2'], values: [result.channel_layout_s1, result.channel_layout_s2] });
+        }
+        continue;
+      }
 
       if (rule.kind === 'model') {
         const m = line.match(rule.label);
@@ -307,4 +366,86 @@ function parseBeltoText(rawText) {
   }
 
   return { values: result, debugMatches };
+}
+
+// Производные поля моноблока — считаются ПОСЛЕ того, как поверх построчного
+// разбора наложен точный разбор HTML-ячеек (app.js), поэтому вынесены в
+// отдельную функцию, а не в хвост parseBeltoText.
+//
+// Согласовано с пользователем (07.09.2026):
+//  - "Тепловая нагрузка ГВС" = сумма мощностей ступеней I + II;
+//  - "Температурный график в точке излома" = температура греющей среды на
+//    входе во II ступень / на выходе из I ступени (например "60/52");
+//  - "Число ходов": 2хБГВ — по одному ходу на ступень ("1 | 1"); при общем
+//    числе ходов 3 (3хБГВ) — 1 + 2, распределение по ступеням уточняется
+//    (поля редактируемые);
+//  - раскладка каналов — латиницей, как в спецификации.
+function deriveMonoblockValues(v) {
+  const num = (x) => {
+    if (x === null || x === undefined || x === '') return NaN;
+    return typeof x === 'number' ? x : parseFloat(String(x).replace(',', '.'));
+  };
+  const has = (x) => Number.isFinite(num(x));
+  const f0 = (x) => formatNumber(num(x), 0);
+
+  ['s1', 's2'].forEach((s) => {
+    ['hot', 'cold'].forEach((c) => {
+      const tin = v[`t_in_${s}_${c}`], tout = v[`t_out_${s}_${c}`];
+      if (has(tin) && has(tout)) v[`temp_${s}_${c}`] = `${f0(tin)}-${f0(tout)}`;
+    });
+    const ka = v[`heat_transfer_coef_actual_${s}`], kr = v[`heat_transfer_coef_required_${s}`];
+    if (has(ka) && has(kr)) v[`heat_transfer_coef_combined_${s}`] = `${f0(ka)}/${f0(kr)}`;
+    else if (has(ka)) v[`heat_transfer_coef_combined_${s}`] = f0(ka);
+    const sm = v[`surface_margin_${s}`];
+    if (has(sm)) {
+      const t = formatNumber(recoverLostDecimal(num(sm)), 2);
+      if (t) v[`surface_margin_pct_${s}`] = t.replace('.', ',') + '%';
+    }
+  });
+
+  // "Поверхность теплообмена" — ОДНА строка на весь аппарат, не по ступеням
+  // (согласовано с пользователем 07.09.2026): физически это площадь ОДНОГО
+  // и того же пластинчатого пакета, в спецификации BelTO указана в блоке
+  // "Характеристики" отдельно на каждую ступень, но обе строки — одно и то
+  // же число (проверено на реальном примере: 44.80 / 44.80). Берём значение
+  // любой ступени, где оно есть.
+  if (has(v.heat_surface_s1) || has(v.heat_surface_s2)) {
+    v.heat_surface = formatNumber(has(v.heat_surface_s1) ? num(v.heat_surface_s1) : num(v.heat_surface_s2), 3);
+  }
+
+  if (has(v.heat_power_s1) && has(v.heat_power_s2)) {
+    v.heat_load_gvs = formatNumber(num(v.heat_power_s1) + num(v.heat_power_s2), 3);
+  } else if (has(v.heat_power_s1) || has(v.heat_power_s2)) {
+    v.heat_load_gvs = formatNumber(has(v.heat_power_s1) ? num(v.heat_power_s1) : num(v.heat_power_s2), 3);
+  }
+
+  // Температурный график сетевой воды у моноблока вводится инженером вручную
+  // (в спецификации нет) — производное значение НЕ подставляем. Точка
+  // излома — из спецификации: вход греющей во II ступень / выход из I.
+  if (has(v.t_in_s2_hot) && has(v.t_out_s1_hot)) {
+    v.temp_graph_break = `${f0(v.t_in_s2_hot)}/${f0(v.t_out_s1_hot)}`;
+  }
+
+  const total = Math.round(num(v.passes_count));
+  if (Number.isFinite(total) && total >= 2) {
+    v.passes_s2 = '1';
+    v.passes_s1 = String(total - 1);
+  } else {
+    v.passes_s2 = '1';
+    v.passes_s1 = '1';
+  }
+  return v;
+}
+
+// Марка моноблока: <марка из бланка>-<кол-во пластин>-<исполнение> (<раскладка
+// II ступени>)+(<раскладка I ступени>) — группы в порядке ступеней В
+// ДОКУМЕНТЕ (II слева, I справа), согласовано с пользователем; пример:
+// ТОР-41-115-2хБГВ (24LL)+(33LL) (пробел перед первой скобкой — правка
+// пользователя от 07.09.2026).
+function buildMonoblockModel(v) {
+  if (!(v.plates_count && v.model_base && v.model_execution)) return null;
+  const blocks = [v.channel_layout_s2, v.channel_layout_s1].filter(Boolean);
+  if (!blocks.length) return null;
+  const marking = blocks.map((b) => `(${b})`).join('+');
+  return `${v.model_base}-${Math.round(parseFloat(v.plates_count))}-${v.model_execution} ${marking}`;
 }

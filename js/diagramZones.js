@@ -30,7 +30,15 @@ async function findDiagramZones(pdfBytes) {
   const bottomFromPageTop = (l) => pageHeight - l.y;
 
   const headingRed = find(/Общий\s+вид\s+теплообменника/i);
-  const attention = find(/ВНИМАНИЕ/i);
+  const headingGreen = find(/Компоновка\s+пластин/i);
+  let attention = find(/ВНИМАНИЕ/i);
+  // Подстраховка: на некоторых бланках (например ТOР-41-2х БГВ, моноблок)
+  // повёрнутая надпись "ВНИМАНИЕ: ..." под картинкой "Общий вид" закодирована
+  // "битым" шрифтом и в текстовом слое PDF не читается вовсе (pdf.js её не
+  // находит) — тогда нижней границей красной зоны берём верх заголовка
+  // "Компоновка пластин" (если он есть — у моноблоков и других многоходовых
+  // моделей он есть всегда) вместо отсутствующей метки.
+  if (!attention && headingGreen) attention = headingGreen;
   if (!headingRed || !attention) return null; // не нашли меток — вызывающий код сам откатится на старую фиксированную рамку
 
   const pad = 2; // небольшой запас, чтобы не обрезать рамку/подписи впритык
@@ -41,7 +49,6 @@ async function findDiagramZones(pdfBytes) {
   if (red.yFrac1 <= red.yFrac0) return null; // защита от абсурдных координат
 
   let green = null;
-  const headingGreen = find(/Компоновка\s+пластин/i);
   if (headingGreen) {
     const executorLine = find(/Расч[её]т\s+выполнил/i);
     // Если подпись "Расчёт выполнил" не нашлась (мало ли какой бланк) —

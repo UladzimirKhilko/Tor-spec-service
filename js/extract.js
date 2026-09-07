@@ -58,6 +58,9 @@ async function extractTextFromHtml(file) {
 function parseBeltoHtmlStructured(doc) {
   const result = {};
   const rows = Array.from(doc.querySelectorAll('tr'));
+  // Моноблок (2хБГВ/3хБГВ): "Спецификация МоноБлок", шапка "Cтупень | I | II"
+  const monoblock = isMonoblockText((doc.body && doc.body.textContent) || '');
+  if (monoblock) result.is_monoblock = true;
   rows.forEach((tr) => {
     const cells = Array.from(tr.querySelectorAll('td')).map((td) =>
       (td.textContent || '').replace(/\s+/g, ' ').trim()
@@ -70,24 +73,76 @@ function parseBeltoHtmlStructured(doc) {
       if (cells[3]) result.heat_medium_cold = cells[3];
       return;
     }
-    if (/^[ТП]епловая\s+Мо[щш]ность$/i.test(label) && cells[1] && cells[1] !== '-') {
-      result.heat_load_unit = cells[1];
-      return;
-    }
-    if (/^Массов\S*\s+Расход$/i.test(label) && cells[1] && cells[1] !== '-') {
-      result.flow_unit = cells[1];
-      return;
-    }
-    if (/^Потер\S*\s+Напор\S*$/i.test(label) && cells[1] && cells[1] !== '-') {
-      result.dp_unit = cells[1];
-      return;
+    if (!monoblock) {
+      if (/^[ТП]епловая\s+Мо[щш]ность$/i.test(label) && cells[1] && cells[1] !== '-') {
+        result.heat_load_unit = cells[1];
+        return;
+      }
+      if (/^Массов\S*\s+Расход$/i.test(label) && cells[1] && cells[1] !== '-') {
+        result.flow_unit = cells[1];
+        return;
+      }
+      if (/^Потер\S*\s+Напор\S*$/i.test(label) && cells[1] && cells[1] !== '-') {
+        result.dp_unit = cells[1];
+        return;
+      }
     }
     if (/^Раскладка\s+Канал\S*$/i.test(label) && cells[2]) {
       result.channel_layout = normalizeChannelLayoutBlock(cells[2]);
+      // Моноблок: "33 LL | 24 LL | 33 LL | 24 LL" — по ступеням I/II
+      if (monoblock && cells.length >= 6 && cells[3]) {
+        result.channel_layout_s1 = normalizeChannelLayoutBlock(cells[2]);
+        result.channel_layout_s2 = normalizeChannelLayoutBlock(cells[3]);
+      }
       return;
     }
+
+    if (!monoblock) return;
+
+    // ---- Моноблок: строки с 4 значениями (греющий I, греющий II,
+    // нагреваемый I, нагреваемый II) и с 2 значениями (ступени I, II).
+    // Число может стоять вместе с единицей в одной ячейке ("140.09 т/ч") —
+    // отделяем; единицу (если она в ячейке) записываем в *_unit.
+    const four = (base, unitKey) => {
+      if (cells.length < 6) return;
+      const keys = [`${base}_s1_hot`, `${base}_s2_hot`, `${base}_s1_cold`, `${base}_s2_cold`];
+      keys.forEach((k, i) => {
+        const { value, unit } = splitNumberAndUnit(cells[2 + i]);
+        if (value !== null) result[k] = value;
+        if (unitKey && unit && !result[unitKey]) result[unitKey] = unit;
+      });
+      if (unitKey && !result[unitKey] && cells[1] && cells[1] !== '-') result[unitKey] = cells[1];
+    };
+    const two = (k1, k2, unitKey) => {
+      if (cells.length < 4) return;
+      const a = splitNumberAndUnit(cells[2]), b = splitNumberAndUnit(cells[3]);
+      if (a.value !== null) result[k1] = a.value;
+      if (b.value !== null) result[k2] = b.value;
+      if (unitKey && cells[1] && cells[1] !== '-') result[unitKey] = cells[1];
+    };
+
+    if (/^[ТП]емператур\S*\s+(?:на\s+)?Вход\S*$/i.test(label)) return four('t_in');
+    if (/^[ТП]емператур\S*\s+(?:на\s+)?Выход\S*$/i.test(label)) return four('t_out');
+    if (/^Массов\S*\s+Расход$/i.test(label)) return four('flow', 'flow_unit');
+    if (/^Потер\S*\s+Напор\S*$/i.test(label)) return four('dp', 'dp_unit');
+    if (/^[ТП]епловая\s+Мо[щш]ность$/i.test(label)) return two('heat_power_s1', 'heat_power_s2', 'heat_load_unit');
+    if (/^Поверхность\s+[ТП]еплообмена$/i.test(label)) return two('heat_surface_s1', 'heat_surface_s2');
+    if (/^Запас\s+по\s+Поверхн\S*$/i.test(label)) return two('surface_margin_s1', 'surface_margin_s2');
+    if (/^Коэф-?т\s+[ТП]еплопередачи\s+Факт\S*$/i.test(label)) return two('heat_transfer_coef_actual_s1', 'heat_transfer_coef_actual_s2');
+    if (/^Коэф-?т\s+[ТП]еплопередачи\s+Необходим\S*$/i.test(label)) return two('heat_transfer_coef_required_s1', 'heat_transfer_coef_required_s2');
   });
   return result;
+}
+
+// "140.09 т/ч" -> { value: 140.09, unit: 'т/ч' }; "350" -> { value: 350, unit: null };
+// "-" / пусто -> { value: null, unit: null }
+function splitNumberAndUnit(cellText) {
+  const t = String(cellText || '').trim();
+  const m = t.match(/^(-?\d+(?:[.,]\d+)?)\s*(.*)$/);
+  if (!m) return { value: null, unit: null };
+  const value = parseFloat(m[1].replace(',', '.'));
+  const unit = (m[2] || '').trim().replace(/^-+$/, '') || null;
+  return { value: Number.isFinite(value) ? value : null, unit };
 }
 
 async function extractTextFromFile(file, onProgress) {

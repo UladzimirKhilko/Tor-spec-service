@@ -11,6 +11,12 @@
  * координат — это вне рамок текущей версии.
  */
 
+// Мастер-шаблоны Word — обычный (1х/2хЦ/3х) и моноблок (2хБГВ/3хБГВ, см.
+// TEMPLATES[1] в fieldMap.js). Путь к обычному не хранится в TEMPLATES[0]
+// (там лежит легаси .vsdx для старого способа) — держим отдельной константой.
+const NORMAL_LETTERHEAD_DOCX = 'templates/BSI-letterhead-template.docx';
+const MONOBLOCK_TEMPLATE_ID = 'tor-monoblock-2xbgv';
+
 let currentTemplate = null;
 let currentFieldValues = {}; // key -> string (то, что реально попадёт в документ)
 let currentDebugMatches = [];
@@ -94,7 +100,11 @@ async function handleCustomTplUpload(file) {
     customTplHash = hash;
     customTplFileName = file.name;
 
-    currentTemplate = { id: 'custom-letterhead', title: file.name, fields: TEMPLATES[0].fields };
+    // Режим (обычный/моноблок) окончательно определяется только после
+    // разбора спецификации (is_monoblock, см. beltoParser.js/extract.js) —
+    // на этапе загрузки бланка ставим обычный шаблон по умолчанию, а
+    // handleFile переключит его на монобблочный, если понадобится (см. ниже).
+    currentTemplate = { id: 'custom-letterhead', title: file.name, fields: TEMPLATES[0].fields, docxFile: NORMAL_LETTERHEAD_DOCX, mode: 'normal' };
     applyDefaultFieldValues(currentTemplate.fields);
     renderForm();
     el('formSection').style.display = '';
@@ -283,6 +293,27 @@ async function handleFile(file) {
       });
     }
 
+    // МОНОБЛОК (2хБГВ/3хБГВ): спецификация "МоноБлок" опознаётся автоматически
+    // (is_monoblock, см. beltoParser.js/extract.js) — переключаем шаблон формы
+    // и мастер-документ Word на монобблочный набор полей (4 столбца по ступеням,
+    // 6 патрубков). Если сотрудник загрузил спецификацию МоноБлок, но нужного
+    // шаблона нет (не должно случиться — он один и универсальный) — остаёмся
+    // на обычном наборе полей и просто предупреждаем в статусе ниже.
+    const wantMonoblock = !!values.is_monoblock;
+    const monoblockTemplate = getTemplateById(MONOBLOCK_TEMPLATE_ID);
+    if (wantMonoblock && monoblockTemplate && currentTemplate.mode !== 'monoblock') {
+      currentTemplate.fields = monoblockTemplate.fields;
+      currentTemplate.docxFile = monoblockTemplate.file;
+      currentTemplate.mode = 'monoblock';
+      applyDefaultFieldValues(currentTemplate.fields);
+    } else if (!wantMonoblock && currentTemplate.mode !== 'normal') {
+      currentTemplate.fields = TEMPLATES[0].fields;
+      currentTemplate.docxFile = NORMAL_LETTERHEAD_DOCX;
+      currentTemplate.mode = 'normal';
+      applyDefaultFieldValues(currentTemplate.fields);
+    }
+    if (wantMonoblock) deriveMonoblockValues(values);
+
     // Марка (база) и исполнение — из PDF-бланка, а не из спецификации и не
     // из зашитого значения по умолчанию. Если строку не удалось распознать
     // (нестандартное форматирование бланка) — поля остаются пустыми, и
@@ -307,6 +338,9 @@ async function handleFile(file) {
         : 'OCR-распознавание';
     const checkHint = method === 'html-table' ? '' : ' — особенно после OCR';
     let statusMsg = `Готово (${methodLabel}). Проверьте поля ниже перед генерацией${checkHint}.`;
+    if (wantMonoblock) {
+      statusMsg += ' Определён МОНОБЛОК (2хБГВ/3хБГВ) — форма и шаблон переключены на вариант с двумя ступенями.';
+    }
     if (!modelParts) {
       statusMsg += ' ⚠ Не удалось распознать марку и исполнение теплообменника в PDF-бланке — заполните поле «Марка теплообменника» и проверьте заголовок документа вручную.';
     }
@@ -459,25 +493,48 @@ const LETTERHEAD_VALUE_KEYS = [
   'heat_medium_hot', 'heat_medium_cold',
 ];
 
+// МОНОБЛОК (2хБГВ/3хБГВ) — свой набор тегов (см. templates/BSI-letterhead-
+// monoblock-template.docx / gen_docx_monoblock.py): 4 столбца по ступеням
+// вместо 2, 6 патрубков вместо 4, плюс поля, которых нет у обычного шаблона
+// (нагрузка отопления, температурный график в точке излома).
+const MONOBLOCK_VALUE_KEYS = [
+  'site', 'customer', 'contact_person', 'contact_info',
+  'heat_load_gvs', 'heat_load_heating', 'temp_graph', 'temp_graph_break',
+  'heat_medium_s2_hot', 'heat_medium_s2_cold', 'heat_medium_s1_hot', 'heat_medium_s1_cold',
+  'temp_s2_hot', 'temp_s2_cold', 'temp_s1_hot', 'temp_s1_cold',
+  'flow_s2_hot', 'flow_s2_cold', 'flow_s1_hot', 'flow_s1_cold',
+  'dp_s2_hot', 'dp_s2_cold', 'dp_s1_hot', 'dp_s1_cold',
+  'plates_count', 'passes_s2', 'passes_s1',
+  'heat_transfer_coef_s2', 'heat_transfer_coef_s1',
+  'surface_margin_s2', 'surface_margin_s1',
+  'heat_surface',
+  'model', 'price_unit', 'price_total', 'dim_a', 'dim_l', 'mass', 'certificates_note',
+  'heat_load_unit', 'flow_unit', 'dp_unit',
+];
+
 function buildLetterheadValues() {
   const formattedCalcNumber = formatCalcNumber(currentFieldValues['calc_number']);
-  // DN (условный диаметр) в бланке напечатан у всех 4 патрубков сразу
-  // (Т1/Т2/В1/Т3) — одно и то же значение дублируется в 4 "синтетических"
-  // поля dn_1..dn_4 (см. LETTERHEAD_FIELDS в builtinPdfMapping.js), как и
-  // shapeIds:[7,42,43,45] делают то же самое для .vsdx-варианта.
-  const dnValue = currentFieldValues['dn'] || '';
+  const isMonoblock = currentTemplate && currentTemplate.mode === 'monoblock';
+  const keys = isMonoblock ? MONOBLOCK_VALUE_KEYS : LETTERHEAD_VALUE_KEYS;
   const values = {};
-  LETTERHEAD_VALUE_KEYS.forEach((key) => { values[key] = currentFieldValues[key] || ''; });
-  return {
+  keys.forEach((key) => { values[key] = currentFieldValues[key] || ''; });
+  const common = {
     ...values,
     executor_name: (currentFieldValues['executor'] || '').trim(),
     // Дата всегда сегодняшняя на момент формирования документа — не
     // зависит от того, заполнено ли ФИО.
     executor_date: formatTodayDateDMY(),
     calc_number: formattedCalcNumber ? `№ ${formattedCalcNumber}` : '',
-    dn_1: dnValue, dn_2: dnValue, dn_3: dnValue, dn_4: dnValue,
     title_model: currentFieldValues['title_model'] || '',
   };
+  const dnValue = currentFieldValues['dn'] || '';
+  if (isMonoblock) {
+    // DN печатается у всех 6 патрубков сразу (Т1,Т2,В1,Т3,Т22,Т4).
+    return { ...common, dn_1: dnValue, dn_2: dnValue, dn_3: dnValue, dn_4: dnValue, dn_5: dnValue, dn_6: dnValue };
+  }
+  // Обычный шаблон: DN у 4 патрубков (Т1/Т2/В1/Т3), см. LETTERHEAD_FIELDS в
+  // builtinPdfMapping.js / shapeIds:[7,42,43,45] для .vsdx-варианта.
+  return { ...common, dn_1: dnValue, dn_2: dnValue, dn_3: dnValue, dn_4: dnValue };
 }
 
 // Кэш вырезанной картинки(картинок) теплообменника — по ключу (файл бланка
@@ -505,7 +562,7 @@ async function handleGenerateCustomDocx() {
       diagram2 = crops.diagram2;
       cachedDiagramCrop = { key, diagram1, diagram2 };
     }
-    const templateBytes = await getDocxTemplateBytes();
+    const templateBytes = await getDocxTemplateBytes(currentTemplate.docxFile || NORMAL_LETTERHEAD_DOCX);
     const bytes = await fillDocxTemplate(templateBytes, values, currentFieldValues['certificates_note'] || '', diagram1, diagram2);
     const filename = buildOutputFilename('docx');
     downloadDocxBytes(bytes, filename);
