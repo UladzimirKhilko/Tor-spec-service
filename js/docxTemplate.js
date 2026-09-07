@@ -63,7 +63,66 @@ function buildCertificatesRawXml(text, { fontSize = 7.5, colorHex = '00008C', fo
   const runs = lines
     .map((line) => `<w:r>${rPr}<w:t xml:space="preserve">${xmlEscape(line)}</w:t></w:r>`)
     .join('<w:br/>');
-  return `<w:p><w:pPr><w:spacing w:after="0"/><w:jc w:val="left"/></w:pPr>${runs}</w:p>`;
+  // w:line="240" w:lineRule="auto" = "одинарный" межстрочный интервал —
+  // без этого абзац наследует докдефолт документа (line="276", то есть
+  // +15% межстрочного интервала сверху обычного) и текст сертификатов
+  // реально занимает заметно больше строк по высоте, чем кажется по
+  // номинальному расчёту (см. estimateCertificatesNoteHeightPt в этом же
+  // файле — там межстрочный интервал теперь тоже посчитан с поправкой).
+  return `<w:p><w:pPr><w:spacing w:after="0" w:before="0" w:line="240" w:lineRule="auto"/><w:jc w:val="left"/></w:pPr>${runs}</w:p>`;
+}
+
+// Ширина блока "Примечание" в шаблоне (колонки 4-8 таблицы, минус отступы
+// ячейки) — см. build_template.py/gen_docx3.py, XS[-1]-XS[4]=184.25pt,
+// margin l=40 r=30 твипов (2pt+1.5pt). Нужна, чтобы ЗАРАНЕЕ (до рендера)
+// прикинуть, сколько строк займёт текст сертификатов в этой колонке —
+// длинный текст "съедает" часть запаса, который иначе достался бы
+// картинке "Компоновка пластин" (см. fillDocxTemplate ниже).
+const CERT_NOTE_BOX_WIDTH_PT = 180.75;
+const CERT_NOTE_FONT_SIZE_PT = 7.5;
+// Номинальный бюджет высоты для текста сертификатов (без заголовка
+// "Примечание" и его отступа) — строки r11..r21 шаблона (11×12.6=138.6pt)
+// минус место под сам заголовок; с небольшим запасом на неточность оценки.
+const CERT_NOTE_BODY_BUDGET_PT = 118;
+
+// Меряет, во сколько строк реально развернётся текст блока "Примечание" в
+// его колонке — через canvas (тот же принцип word-wrap, что использует
+// Word/LibreOffice), а не через фиксированное число строк, потому что
+// длина этого текста разная от расчёта к расчёту (разное число
+// сертификатов у заказчика).
+function estimateCertificatesNoteHeightPt(text) {
+  if (!text) return 0;
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const fontPx = (CERT_NOTE_FONT_SIZE_PT * 96) / 72;
+    ctx.font = `${fontPx}px "Times New Roman", serif`;
+    const boxWidthPx = (CERT_NOTE_BOX_WIDTH_PT * 96) / 72;
+    const rawLines = String(text).split('\n');
+    let totalLines = 0;
+    for (const rawLine of rawLines) {
+      if (rawLine.trim() === '') { totalLines += 1; continue; }
+      const words = rawLine.split(/\s+/).filter(Boolean);
+      let cur = '';
+      let linesForThis = 0;
+      for (const w of words) {
+        const test = cur ? `${cur} ${w}` : w;
+        if (cur && ctx.measureText(test).width > boxWidthPx) {
+          linesForThis += 1;
+          cur = w;
+        } else {
+          cur = test;
+        }
+      }
+      if (cur) linesForThis += 1;
+      totalLines += Math.max(1, linesForThis);
+    }
+    const lineHeightPt = CERT_NOTE_FONT_SIZE_PT * 1.15;
+    return totalLines * lineHeightPt;
+  } catch (e) {
+    console.warn('Не удалось измерить длину блока "Примечание" — картинка 2 останется на потолке по умолчанию', e);
+    return 0;
+  }
 }
 
 /**
@@ -93,14 +152,39 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
   // высоте, с сохранением пропорций), в отведённый под неё бюджет по
   // высоте — это гарантирует, что документ остаётся на одном листе A4 при
   // любой картинке. Бюджет картинки "Общий вид" (r23 в шаблоне) — 248pt,
-  // бюджет "Компоновка пластин" (r23b, появляется только при наличии
-  // diagram2Image) — 70pt; оба уже с запасом проверены в реальном Word
-  // (см. историю чата — LibreOffice прощает то, что настоящий Word не
-  // прощает, поэтому запас всегда берётся заметно больше нуля).
+  // уже с запасом проверен в реальном Word (см. историю чата — LibreOffice
+  // прощает то, что настоящий Word не прощает, поэтому запас всегда
+  // берётся заметно больше нуля).
+  //
+  // Бюджет картинки "Компоновка пластин" (r23b, появляется только при
+  // наличии diagram2Image) — ПЕРЕМЕННЫЙ, не фиксированное число: потолок
+  // строки в шаблоне — 125pt (как в оригинале PDF-бланка, та же ширина,
+  // что у "Общего вида"), но реально доступное место зависит от того,
+  // сколько строк займёт текст блока "Примечание" в ЭТОМ конкретном
+  // расчёте (сертификаты — список переменной длины). Раньше здесь стояло
+  // фиксированное маленькое число (с большим запасом на случай длинного
+  // текста) — из-за этого картинка выходила заметно уже "Общего вида" даже
+  // тогда, когда места было полно (пожаловался пользователь: непропорционально,
+  // не как в оригинале). Теперь длина текста меряется заранее
+  // (estimateCertificatesNoteHeightPt) и картинка ужимается только на
+  // столько, на сколько текст реально "съел" запас.
   const TARGET_WIDTH_PT = 530;
   const TARGET_HEIGHT_PT = 240;
+  // Целевая высота для картинки 2 больше не должна быть узким местом:
+  // после того как cropZoneFromPdf/cropDiagramFromPdf стали обрезать
+  // собственную рамку картинки (см. trimBorderFromCanvas в diagramCrop.js),
+  // соотношение сторон "Компоновки" даёт высоту ~105-115pt при полной
+  // ширине 530pt (как у "Общего вида") — раньше здесь стояло 95pt, из-за
+  // чего КАРТИНКА, А НЕ БЮДЖЕТ ТЕКСТА "Примечание", была тем, что мешало
+  // картинке 2 стать вровень по ширине с картинкой 1 (жаловался
+  // пользователь: "миниатюра"). Потолок строки в шаблоне (r23b, см.
+  // gen_docx3.py) поднят вместе с этим значением.
+  const NATURAL_TARGET_HEIGHT_PT_2 = 120;
+  const MIN_TARGET_HEIGHT_PT_2 = 30;
+  const noteHeightPt = estimateCertificatesNoteHeightPt(certificatesNoteText);
+  const noteOverflowPt = Math.max(0, noteHeightPt - CERT_NOTE_BODY_BUDGET_PT);
   const TARGET_WIDTH_PT_2 = 530;
-  const TARGET_HEIGHT_PT_2 = 32;
+  const TARGET_HEIGHT_PT_2 = Math.max(MIN_TARGET_HEIGHT_PT_2, NATURAL_TARGET_HEIGHT_PT_2 - noteOverflowPt);
   const TARGET_WIDTH_PX = Math.round((TARGET_WIDTH_PT / 72) * 96);
   const TARGET_HEIGHT_PX = Math.round((TARGET_HEIGHT_PT / 72) * 96);
   const TARGET_WIDTH_PX_2 = Math.round((TARGET_WIDTH_PT_2 / 72) * 96);
@@ -155,7 +239,62 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
 
   doc.render(data);
 
-  return doc.getZip().generate({ type: 'uint8array', compression: 'DEFLATE',
+  // ВАЖНО: строки таблицы под картинки (r23/r23b в шаблоне) заданы с
+  // ЗАПАСОМ по высоте (248pt/35pt — проверенный безопасный максимум, чтобы
+  // при любой картинке гарантированно остаться на 1 странице A4, см.
+  // комментарий выше). Но у большинства картинок реальная высота ПОСЛЕ
+  // вписывания по ширине (fitSize) заметно меньше этого максимума — если
+  // оставить фиксированный запас как есть, вокруг картинки остаётся много
+  // пустого места внутри рамки (жаловался пользователь: "не гармонично").
+  // Поэтому здесь высота строки в уже отрендеренном документе подгоняется
+  // под ФАКТИЧЕСКИЙ размер конкретной картинки — рамка обхватывает картинку
+  // плотно, но НИКОГДА не растягивается больше исходного проверенного
+  // максимума (только уменьшается), так что безопасность (1 страница)
+  // не может пострадать — это исключительно про плотность вёрстки.
+  const outZip = doc.getZip();
+  let xml = outZip.file('word/document.xml').asText();
+
+  // ВАЖНО: в самом шаблоне абзацы с картинками (d1p/d2p) обнулены через
+  // zero_spacing (gen_docx3.py) — но docxtemplater-image-module-free при
+  // подстановке {%tag} картинкой пересобирает <w:p>/<w:r> заново и теряет
+  // <w:spacing> из исходного <w:pPr> (проверено: остаётся только <w:jc>).
+  // Абзац тогда наследует докдефолт документа (interval 1.15 + отступ
+  // после абзаца) и после картинки резервируется лишних ~7-8pt — почти всё
+  // это ложится СНИЗУ картинки (сама картинка выравнивается по верху своей
+  // строки), что и давало заметный зазор до нижней линии рамки ("снизу под
+  // картинкой есть много места" — см. историю чата). Возвращаем обнулённый
+  // интервал напрямую в уже отрендеренный XML, только для абзацев с
+  // <w:drawing> (не задевает остальной документ).
+  xml = xml.replace(
+    /<w:p><w:pPr><w:jc w:val="center"\/><\/w:pPr><w:r><w:rPr\/><w:drawing>/g,
+    '<w:p><w:pPr><w:spacing w:after="0" w:before="0" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr/><w:drawing>'
+  );
+
+  function tightenRowHeight(marker, img, boxWpx, boxHpx, marginPt, minPt, maxTwips) {
+    if (!img) return;
+    const [, hpx] = fitSize(img, boxWpx, boxHpx);
+    const heightPt = (hpx * 72) / 96;
+    const desiredPt = Math.max(minPt, heightPt + marginPt);
+    const desiredTwips = Math.min(maxTwips, Math.round(desiredPt * 20));
+    if (desiredTwips >= maxTwips) return; // уже на максимуме — менять нечего
+    const from = `w:trHeight w:val="${maxTwips}" w:hRule="atLeast"`;
+    const to = `w:trHeight w:val="${desiredTwips}" w:hRule="atLeast"`;
+    if (xml.includes(from)) xml = xml.replace(from, to);
+  }
+
+  tightenRowHeight('diagram1', diagramImage, TARGET_WIDTH_PX, TARGET_HEIGHT_PX, 16, 60, 4961);
+  if (hasDiagram2) {
+    // marginPt уменьшен (10 -> 6): раньше запас держали и под возможную
+    // рамку картинки, и под погрешность вписывания — рамки у картинки
+    // больше нет (trimBorderFromCanvas), так что содержимое можно подвести
+    // почти вплотную к линии таблицы снизу, как просил пользователь
+    // ("чтобы совпала линия картинки и линия блока внизу"). maxTwips поднят
+    // вместе с потолком строки r23b в шаблоне (125pt -> 145pt).
+    tightenRowHeight('diagram2', diagram2Image, TARGET_WIDTH_PX_2, TARGET_HEIGHT_PX_2, 6, 24, 2900);
+  }
+  outZip.file('word/document.xml', xml);
+
+  return outZip.generate({ type: 'uint8array', compression: 'DEFLATE',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
 }
 
