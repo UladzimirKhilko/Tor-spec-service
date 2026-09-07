@@ -71,11 +71,15 @@ function buildCertificatesRawXml(text, { fontSize = 7.5, colorHex = '00008C', fo
  * @param {object} values - { tag: string } - обычные текстовые поля
  * @param {string} certificatesNoteText - сырой текст блока "Примечание" (с \n)
  * @param {{bytes: Uint8Array, widthPx: number, heightPx: number}|null} diagramImage -
- *   картинка теплообменника (уже вырезанная в PNG) + её пиксельные размеры;
- *   null — если картинки нет (тег в шаблоне тогда останется пустым/без фото)
+ *   картинка "Общий вид теплообменника" (уже вырезанная в PNG) + её
+ *   пиксельные размеры; null — если картинки нет
+ * @param {{bytes: Uint8Array, widthPx: number, heightPx: number}|null} [diagram2Image] -
+ *   картинка "Компоновка пластин в теплообменнике" — только у многоходовых
+ *   моделей (2х, 2хЦ, 3х и т.п.); null/undefined — блок в документе не
+ *   появится вовсе (заголовок + место под картинку не занимают места).
  * @returns {Promise<Uint8Array>}
  */
-async function fillDocxTemplate(templateBytes, values, certificatesNoteText, diagramImage) {
+async function fillDocxTemplate(templateBytes, values, certificatesNoteText, diagramImage, diagram2Image) {
   if (!diagramImage || !diagramImage.bytes || !diagramImage.bytes.length) {
     throw new Error('Нет картинки теплообменника — сначала загрузите бланк с картинкой (см. шаг 1) или дождитесь автовырезки.');
   }
@@ -85,40 +89,46 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
   // см. builtinPdfMapping.js LETTERHEAD_PAGE/константы верстки) переведённая
   // в пиксели при 96 dpi (стандарт OOXML: 1px = 9525 EMU = 1/96 дюйма).
   //
-  // ВАЖНО: раньше картинка масштабировалась ТОЛЬКО по ширине — высота
-  // считалась из пропорций исходной картинки. У разных моделей вырезанная
-  // из PDF-бланка картинка бывает разной по пропорциям (например у моделей
-  // с несколькими ходами добавляется ещё и схема "Компоновка пластин" —
-  // картинка получается заметно выше), и при масштабировании только по
-  // ширине такая картинка оказывалась выше отведённой под неё строки
-  // таблицы (~248pt, см. templates/BSI-letterhead-template.docx) — снизу
-  // обрезалась или документ уезжал на 2-ю страницу. Теперь картинка всегда
-  // вписывается В ОБЕ стороны (по ширине И по высоте, с сохранением
-  // пропорций) — это гарантирует, что документ остаётся на одном листе A4
-  // при любой картинке. Если по факту важной части не хватило места —
-  // сотрудник может подрезать саму область вырезки на шаге 1 ("Высота
-  // картинки, мм"), чтобы в кадр не попадало лишнее (см. app.js/diagramCrop.js).
+  // ВАЖНО: картинка всегда вписывается В ОБЕ стороны (по ширине И по
+  // высоте, с сохранением пропорций), в отведённый под неё бюджет по
+  // высоте — это гарантирует, что документ остаётся на одном листе A4 при
+  // любой картинке. Бюджет картинки "Общий вид" (r23 в шаблоне) — 248pt,
+  // бюджет "Компоновка пластин" (r23b, появляется только при наличии
+  // diagram2Image) — 70pt; оба уже с запасом проверены в реальном Word
+  // (см. историю чата — LibreOffice прощает то, что настоящий Word не
+  // прощает, поэтому запас всегда берётся заметно больше нуля).
   const TARGET_WIDTH_PT = 530;
   const TARGET_HEIGHT_PT = 240;
+  const TARGET_WIDTH_PT_2 = 530;
+  const TARGET_HEIGHT_PT_2 = 32;
   const TARGET_WIDTH_PX = Math.round((TARGET_WIDTH_PT / 72) * 96);
   const TARGET_HEIGHT_PX = Math.round((TARGET_HEIGHT_PT / 72) * 96);
+  const TARGET_WIDTH_PX_2 = Math.round((TARGET_WIDTH_PT_2 / 72) * 96);
+  const TARGET_HEIGHT_PX_2 = Math.round((TARGET_HEIGHT_PT_2 / 72) * 96);
 
-  // ВАЖНО: значение тега {%diagram_image} должно быть чем-то отличным от
-  // "object" (docxtemplater-image-module-free трактует объект/массив в
-  // значении тега как уже готовый {rId, sizePixel} — то есть считает, что
-  // картинка уже вставлена, и падает на sizePixel[0]). Поэтому в данные
-  // кладём просто маркер-строку, а сами байты картинки достаём из замыкания
-  // (diagramImage) внутри getImage — тело tagValue игнорируем.
+  function fitSize(img, boxWpx, boxHpx) {
+    if (!img.widthPx || !img.heightPx) return [boxWpx, Math.round(boxWpx * 0.46)];
+    const scale = Math.min(boxWpx / img.widthPx, boxHpx / img.heightPx);
+    return [Math.round(img.widthPx * scale), Math.round(img.heightPx * scale)];
+  }
+
+  // ВАЖНО: значение тега {%diagram_image}/{%diagram2_image} должно быть
+  // чем-то отличным от "object" (docxtemplater-image-module-free трактует
+  // объект/массив в значении тега как уже готовый {rId, sizePixel} — то
+  // есть считает, что картинка уже вставлена, и падает на sizePixel[0]).
+  // Поэтому в данные кладём просто маркер-строку, а сами байты картинки
+  // достаём из замыкания внутри getImage — второй параметр (part.value,
+  // имя тега) говорит, какую из двух картинок сейчас подставляет модуль.
   const imageModule = new ImageModule({
     centered: true,
     fileType: 'docx',
-    getImage() {
+    getImage(tagValue, tagName) {
+      if (tagName === 'diagram2_image') return diagram2Image.bytes;
       return diagramImage.bytes;
     },
-    getSize() {
-      if (!diagramImage.widthPx || !diagramImage.heightPx) return [TARGET_WIDTH_PX, Math.round(TARGET_WIDTH_PX * 0.46)];
-      const scale = Math.min(TARGET_WIDTH_PX / diagramImage.widthPx, TARGET_HEIGHT_PX / diagramImage.heightPx);
-      return [Math.round(diagramImage.widthPx * scale), Math.round(diagramImage.heightPx * scale)];
+    getSize(imgBuffer, tagValue, tagName) {
+      if (tagName === 'diagram2_image') return fitSize(diagram2Image, TARGET_WIDTH_PX_2, TARGET_HEIGHT_PX_2);
+      return fitSize(diagramImage, TARGET_WIDTH_PX, TARGET_HEIGHT_PX);
     },
   });
 
@@ -135,9 +145,13 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
     nullGetter: () => '',
   });
 
+  const hasDiagram2 = !!(diagram2Image && diagram2Image.bytes && diagram2Image.bytes.length);
+
   const data = { ...values };
   data.certificates_note = buildCertificatesRawXml(certificatesNoteText);
   data.diagram_image = 'diagram';
+  data.has_diagram2 = hasDiagram2;
+  if (hasDiagram2) data.diagram2_image = 'diagram2';
 
   doc.render(data);
 

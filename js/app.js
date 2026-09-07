@@ -123,11 +123,38 @@ async function handleCustomTplUpload(file) {
   }
 }
 
-// Показывает вырезанную из загруженного PDF картинку теплообменника прямо в
-// форме (вместо старого способа — скачивать отдельный "тестовый PDF" и
-// сверять руками) — это и есть самопроверка перед генерацией настоящего
-// документа: если картинка на превью съехала (обрезаны патрубки/подписи),
-// сотрудник сам поправит "сдвиг по X/Y" и нажмёт "Обновить превью" ещё раз.
+// Вырезает картинку(и) теплообменника из загруженного PDF-бланка.
+// Сначала пробуем найти зоны "Общий вид" / "Компоновка пластин" по
+// текстовым меткам (findDiagramZones — diagramZones.js): это даёт две
+// отдельные картинки, без текста "Расчёт выполнил" (он дублировал бы наш
+// собственный футер) и без гадания процентом от страницы для КАЖДОГО
+// конкретного файла. Если меток не нашлось (нестандартный бланк) —
+// откатываемся на старый способ: один кадр фиксированного окна с ручной
+// поправкой высоты ("Высота картинки, мм").
+async function getDiagramCrops(pdfBytes, offsetXFrac, offsetYFrac, cropHeightFrac) {
+  let zones = null;
+  try {
+    zones = await findDiagramZones(pdfBytes);
+  } catch (e) {
+    console.warn('Не удалось определить зоны картинок по тексту PDF', e);
+  }
+
+  if (zones && zones.red) {
+    const diagram1 = await cropZoneFromPdf(pdfBytes, zones.red, offsetXFrac);
+    const diagram2 = zones.green ? await cropZoneFromPdf(pdfBytes, zones.green, offsetXFrac) : null;
+    return { diagram1, diagram2, autoDetected: true };
+  }
+
+  const diagram1 = await cropDiagramFromPdf(pdfBytes, offsetXFrac, offsetYFrac, cropHeightFrac);
+  return { diagram1, diagram2: null, autoDetected: false };
+}
+
+// Показывает вырезанную из загруженного PDF картинку(и) теплообменника
+// прямо в форме (вместо старого способа — скачивать отдельный "тестовый
+// PDF" и сверять руками) — это и есть самопроверка перед генерацией
+// настоящего документа: если картинка на превью съехала (обрезаны
+// патрубки/подписи), сотрудник сам поправит "сдвиг по X/Y" и нажмёт
+// "Обновить превью" ещё раз.
 async function handleUpdateDiagramPreview() {
   if (!customTplBytes) {
     setStatus('diagramPreviewStatus', 'Сначала загрузите бланк.', 'err');
@@ -136,21 +163,52 @@ async function handleUpdateDiagramPreview() {
   readOffsetInputs();
   setStatus('diagramPreviewStatus', 'Вырезаю картинку из PDF...');
   try {
-    const crop = await cropDiagramFromPdf(customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac);
+    const { diagram1, diagram2, autoDetected } = await getDiagramCrops(
+      customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac
+    );
     const key = `custom:${customTplHash}:${customTplOffsetXFrac}:${customTplOffsetYFrac}:${customTplCropHeightFrac}`;
-    cachedDiagramCrop = { key, crop };
-    const blob = new Blob([crop.bytes], { type: 'image/png' });
-    const url = URL.createObjectURL(blob);
-    const img = el('diagramPreviewImg');
-    if (img.dataset.prevUrl) URL.revokeObjectURL(img.dataset.prevUrl);
-    img.src = url;
-    img.dataset.prevUrl = url;
-    img.style.display = '';
-    setStatus('diagramPreviewStatus', 'Готово — сверьте с образцом. Если патрубки/подписи обрезаны, поправьте сдвиг и нажмите ещё раз.', 'ok');
+    cachedDiagramCrop = { key, diagram1, diagram2 };
+
+    showPreviewImage('diagramPreviewImg', diagram1);
+    el('diagramPreviewLabel1').style.display = autoDetected ? '' : 'none';
+    if (diagram2) {
+      showPreviewImage('diagramPreviewImg2', diagram2);
+      el('diagramPreviewLabel2').style.display = '';
+    } else {
+      hidePreviewImage('diagramPreviewImg2');
+      el('diagramPreviewLabel2').style.display = 'none';
+    }
+
+    setStatus(
+      'diagramPreviewStatus',
+      autoDetected
+        ? (diagram2
+          ? 'Готово — найдены обе зоны («Общий вид» и «Компоновка пластин»). Сверьте с образцом.'
+          : 'Готово — найдена зона «Общий вид» (у этой модели «Компоновка пластин» не обнаружена — один ход). Сверьте с образцом.')
+        : 'Готово (подписи на бланке не распознались — использован запасной способ вырезки по фиксированному окну). Если патрубки/подписи обрезаны, поправьте сдвиг/высоту и нажмите ещё раз.',
+      'ok'
+    );
   } catch (err) {
     console.error(err);
     setStatus('diagramPreviewStatus', 'Ошибка вырезки картинки: ' + err.message, 'err');
   }
+}
+
+function showPreviewImage(imgId, crop) {
+  const blob = new Blob([crop.bytes], { type: 'image/png' });
+  const url = URL.createObjectURL(blob);
+  const img = el(imgId);
+  if (img.dataset.prevUrl) URL.revokeObjectURL(img.dataset.prevUrl);
+  img.src = url;
+  img.dataset.prevUrl = url;
+  img.style.display = '';
+}
+
+function hidePreviewImage(imgId) {
+  const img = el(imgId);
+  if (img.dataset.prevUrl) { URL.revokeObjectURL(img.dataset.prevUrl); img.dataset.prevUrl = ''; }
+  img.src = '';
+  img.style.display = 'none';
 }
 
 function setStatus(elId, text, kind) {
@@ -372,10 +430,10 @@ function buildLetterheadValues() {
   };
 }
 
-// Кэш вырезанной картинки теплообменника — по ключу (файл бланка + сдвиг),
-// чтобы не перевырезать её из PDF при каждом клике "Скачать", если ничего
-// не поменялось с прошлого раза.
-let cachedDiagramCrop = null; // { key, crop }
+// Кэш вырезанной картинки(картинок) теплообменника — по ключу (файл бланка
+// + сдвиг), чтобы не перевырезать их из PDF при каждом клике "Скачать",
+// если ничего не поменялось с прошлого раза.
+let cachedDiagramCrop = null; // { key, diagram1, diagram2 }
 
 async function handleGenerateCustomDocx() {
   if (!customTplBytes) {
@@ -387,15 +445,18 @@ async function handleGenerateCustomDocx() {
     readOffsetInputs();
     const values = buildLetterheadValues();
     const key = `custom:${customTplHash}:${customTplOffsetXFrac}:${customTplOffsetYFrac}:${customTplCropHeightFrac}`;
-    let diagram;
+    let diagram1, diagram2;
     if (cachedDiagramCrop && cachedDiagramCrop.key === key) {
-      diagram = cachedDiagramCrop.crop;
+      diagram1 = cachedDiagramCrop.diagram1;
+      diagram2 = cachedDiagramCrop.diagram2;
     } else {
-      diagram = await cropDiagramFromPdf(customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac);
-      cachedDiagramCrop = { key, crop: diagram };
+      const crops = await getDiagramCrops(customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac);
+      diagram1 = crops.diagram1;
+      diagram2 = crops.diagram2;
+      cachedDiagramCrop = { key, diagram1, diagram2 };
     }
     const templateBytes = await getDocxTemplateBytes();
-    const bytes = await fillDocxTemplate(templateBytes, values, currentFieldValues['certificates_note'] || '', diagram);
+    const bytes = await fillDocxTemplate(templateBytes, values, currentFieldValues['certificates_note'] || '', diagram1, diagram2);
     const filename = buildOutputFilename('docx');
     downloadDocxBytes(bytes, filename);
     setStatus('genStatus', `Скачан файл ${filename}`, 'ok');

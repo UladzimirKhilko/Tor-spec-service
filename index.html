@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>БСИ — короткие спецификации теплообменников</title>
-<link rel="stylesheet" href="css/style.css?v=29" />
+<link rel="stylesheet" href="css/style.css?v=30" />
 
 <!-- Библиотеки — собраны локально в vendor/, CDN не требуется для загрузки самого приложения.
      Исключение: Tesseract.js при OCR-распознавании сам подтягивает языковые данные
@@ -33,12 +33,15 @@
         <label>Сдвиг по Y, мм <input type="number" id="offsetYInput" value="0" step="0.5" /></label>
         <label>Высота картинки, мм <input type="number" id="cropHeightInput" step="1" /></label>
       </div>
-      <div class="hint">Картинка вырезается из PDF-бланка по фиксированному окну и автоматически вписывается в отведённое место в документе — документ всегда остаётся на одном листе A4. Если снизу в кадр попадает лишнее (например схема «Компоновка пластин» у многоходовых моделей) — уменьшите «Высоту картинки»; если наоборот, картинка обрезана — увеличьте.</div>
+      <div class="hint">Программа сама находит на бланке «Общий вид теплообменника» и (если есть) «Компоновка пластин» по подписям и вырезает их как две отдельные картинки — текст «Расчёт выполнил» из PDF в вырезку не попадает (эти данные и так есть в шаблоне). Поле «Высота картинки» — запасной вариант на случай, если подписи не нашлись на нестандартном бланке: тогда вырезается один кадр фиксированной высоты, как раньше.</div>
       <div class="actions-row">
         <button id="btnCheckAlignment" class="secondary">Обновить превью картинки</button>
       </div>
       <div class="status-line" id="diagramPreviewStatus"></div>
-      <img id="diagramPreviewImg" style="display:none; max-width:100%; border:1px solid var(--border); border-radius:6px; margin-top:8px;" />
+      <div class="hint" id="diagramPreviewLabel1" style="display:none; margin-top:8px; font-weight:600;">Общий вид теплообменника</div>
+      <img id="diagramPreviewImg" style="display:none; max-width:100%; border:1px solid var(--border); border-radius:6px; margin-top:4px;" />
+      <div class="hint" id="diagramPreviewLabel2" style="display:none; margin-top:8px; font-weight:600;">Компоновка пластин в теплообменнике</div>
+      <img id="diagramPreviewImg2" style="display:none; max-width:100%; border:1px solid var(--border); border-radius:6px; margin-top:4px;" />
     </div>
   </section>
 
@@ -89,17 +92,18 @@
 <script src="vendor/pizzip.min.js"></script>
 <script src="vendor/docxtemplater.min.js"></script>
 <script src="vendor/docxtemplater-image-module-free.js"></script>
-<script src="js/config.js?v=29"></script>
-<script src="js/units.js?v=29"></script>
-<script src="js/fieldMap.js?v=29"></script>
-<script src="js/beltoParser.js?v=29"></script>
-<script src="js/extract.js?v=29"></script>
-<script src="js/pdfTemplate.js?v=29"></script>
-<script src="js/builtinPdfMapping.js?v=29"></script>
-<script src="js/docxTemplate.js?v=29"></script>
-<script src="js/diagramCrop.js?v=29"></script>
-<script src="js/modelExtract.js?v=29"></script>
-<script src="js/sheetsLog.js?v=29"></script>
-<script src="js/app.js?v=29"></script>
+<script src="js/config.js?v=30"></script>
+<script src="js/units.js?v=30"></script>
+<script src="js/fieldMap.js?v=30"></script>
+<script src="js/beltoParser.js?v=30"></script>
+<script src="js/extract.js?v=30"></script>
+<script src="js/pdfTemplate.js?v=30"></script>
+<script src="js/builtinPdfMapping.js?v=30"></script>
+<script src="js/docxTemplate.js?v=30"></script>
+<script src="js/diagramCrop.js?v=30"></script>
+<script src="js/modelExtract.js?v=30"></script>
+<script src="js/diagramZones.js?v=30"></script>
+<script src="js/sheetsLog.js?v=30"></script>
+<script src="js/app.js?v=30"></script>
 </body>
 </html>

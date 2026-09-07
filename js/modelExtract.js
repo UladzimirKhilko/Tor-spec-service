@@ -22,10 +22,17 @@
 // "Марка теплообменника" превратились бы в один "слипшийся" кусок, а
 // разорванные посреди слова числа/буквы — наоборот, обрастали бы лишними
 // пробелами).
-async function getPdfPageLines(pdfBytes) {
+// Возвращает строки страницы вместе с их Y-позицией в родных координатах
+// PDF (низ страницы = 0, единицы — pt) и приблизительной высотой символов
+// (по font-matrix масштабу элемента) — используется и для поиска марки
+// (нужен только текст), и для поиска Y-меток зон вырезки картинок в
+// diagramCrop.js (нужна ещё и позиция, чтобы найти верх/низ конкретного
+// заголовка на конкретном файле, а не гадать процентом от страницы).
+async function getPdfPageLinesWithPos(pdfBytes) {
   const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
   const page = await pdf.getPage(1);
   const content = await page.getTextContent();
+  const viewport = page.getViewport({ scale: 1 });
 
   const items = content.items
     .filter((it) => it.str && it.str.trim() !== '')
@@ -33,6 +40,7 @@ async function getPdfPageLines(pdfBytes) {
       str: it.str,
       x: it.transform[4],
       y: it.transform[5],
+      h: Math.abs(it.transform[3]) || 10,
       w: it.width || 0,
     }));
 
@@ -40,7 +48,7 @@ async function getPdfPageLines(pdfBytes) {
   const lines = [];
   items.forEach((it) => {
     let line = lines.find((l) => Math.abs(l.y - it.y) < yTol);
-    if (!line) { line = { y: it.y, items: [] }; lines.push(line); }
+    if (!line) { line = { y: it.y, h: it.h, items: [] }; lines.push(line); }
     line.items.push(it);
   });
   lines.sort((a, b) => b.y - a.y);
@@ -54,8 +62,14 @@ async function getPdfPageLines(pdfBytes) {
       s += it.str;
       prevEnd = it.x + it.w;
     });
-    return s.trim();
+    return { text: s.trim(), y: l.y, h: l.h, pageHeight: viewport.height };
   });
+}
+
+// Обратная совместимость: только текст строк (для extractModelPartsFromPdf).
+async function getPdfPageLines(pdfBytes) {
+  const lines = await getPdfPageLinesWithPos(pdfBytes);
+  return lines.map((l) => l.text);
 }
 
 // Из строки вида "Марка теплообменника ТОР-15М/13-1х(LL+НН) ..." достаёт
