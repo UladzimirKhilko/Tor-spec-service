@@ -362,7 +362,12 @@ function parseBeltoText(rawText) {
     sm = recoverLostDecimal(sm);
     result.surface_margin = sm;
     const s = formatNumber(sm, 2);
-    if (s) result.surface_margin_pct = s.replace('.', ',') + '%';
+    // ВАЖНО: БЕЗ знака "%" в самом значении — колонка "Ед.изм" в шаблоне уже
+    // печатает "%" отдельно, добавлять его в значение тоже — задваивать знак
+    // (пользователь заметил на реальном документе: "43,02%" в ячейке рядом
+    // с "%" в столбце единиц). Формат — с запятой как десятичным
+    // разделителем (рус.), без знака процента.
+    if (s) result.surface_margin_pct = s.replace('.', ',');
   }
 
   return { values: result, debugMatches };
@@ -399,7 +404,9 @@ function deriveMonoblockValues(v) {
     const sm = v[`surface_margin_${s}`];
     if (has(sm)) {
       const t = formatNumber(recoverLostDecimal(num(sm)), 2);
-      if (t) v[`surface_margin_pct_${s}`] = t.replace('.', ',') + '%';
+      // Без "%" в значении — колонка "Ед.изм" уже печатает "%" отдельно
+      // (см. комментарий у обычного surface_margin_pct выше).
+      if (t) v[`surface_margin_pct_${s}`] = t.replace('.', ',');
     }
   });
 

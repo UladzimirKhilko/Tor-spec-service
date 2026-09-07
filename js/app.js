@@ -379,6 +379,16 @@ function resolveDynamicUnits(sourceValues) {
   } else {
     currentFieldValues.dp_unit = sourceValues.dp_unit; // незнакомая единица — конвертации не было, подписываем как в спецификации
   }
+
+  // МОНОБЛОК: "Тепловая нагрузка отопления" — поле ручного ввода (в
+  // спецификации её нет), но единица измерения для неё — своя, РЕДАКТИРУЕМАЯ
+  // (может понадобиться кВт/МВт/ккал/ч, а не тот же Гкал/ч, что у нагрузки
+  // ГВС). Подставляем разумное значение по умолчанию (ту же единицу, что у
+  // ГВС) только один раз — если сотрудник уже поменял её в форме, повторный
+  // разбор спецификации (например другой файл) это значение не затирает.
+  if (!currentFieldValues.heat_load_heating_unit) {
+    currentFieldValues.heat_load_heating_unit = currentFieldValues.heat_load_unit;
+  }
 }
 
 function applyParsedValues(sourceValues) {
@@ -499,7 +509,7 @@ const LETTERHEAD_VALUE_KEYS = [
 // (нагрузка отопления, температурный график в точке излома).
 const MONOBLOCK_VALUE_KEYS = [
   'site', 'customer', 'contact_person', 'contact_info',
-  'heat_load_gvs', 'heat_load_heating', 'temp_graph', 'temp_graph_break',
+  'heat_load_gvs', 'heat_load_heating', 'heat_load_heating_unit', 'temp_graph', 'temp_graph_break',
   'heat_medium_s2_hot', 'heat_medium_s2_cold', 'heat_medium_s1_hot', 'heat_medium_s1_cold',
   'temp_s2_hot', 'temp_s2_cold', 'temp_s1_hot', 'temp_s1_cold',
   'flow_s2_hot', 'flow_s2_cold', 'flow_s1_hot', 'flow_s1_cold',
