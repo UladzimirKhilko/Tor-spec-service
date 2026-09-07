@@ -267,9 +267,21 @@ async function handleFile(file) {
   setStatus('parseStatus', `Обрабатываю файл: ${file.name}...`);
   el('debugDetails').style.display = 'none';
   try {
-    const { text, method } = await extractTextFromFile(file, (msg) => setStatus('parseStatus', msg));
+    const { text, method, structured } = await extractTextFromFile(file, (msg) => setStatus('parseStatus', msg));
     const { values, debugMatches } = parseBeltoText(text);
     currentDebugMatches = debugMatches;
+
+    // Для HTML-отчёта (метод 'html-table') structured — точный разбор по
+    // ячейкам (среда, единицы измерения, см. extract.js) — сильнее общего
+    // построчного regex-разбора выше, где многословные названия ("Пар
+    // водяной", "Пропиленгликоль 40%") надёжно не разделить. Накладываем
+    // поверх, не перетирая уже найденное построчным разбором, если по
+    // ячейкам что-то не нашлось.
+    if (structured) {
+      Object.keys(structured).forEach((k) => {
+        if (structured[k]) values[k] = structured[k];
+      });
+    }
 
     // Марка (база) и исполнение — из PDF-бланка, а не из спецификации и не
     // из зашитого значения по умолчанию. Если строку не удалось распознать
@@ -285,6 +297,7 @@ async function handleFile(file) {
     }
 
     applyParsedValues(values);
+    resolveDynamicUnits(values);
     renderForm();
 
     const methodLabel = method === 'html-table'
@@ -308,6 +321,29 @@ async function handleFile(file) {
   } catch (err) {
     console.error(err);
     setStatus('parseStatus', 'Ошибка распознавания: ' + err.message, 'err');
+  }
+}
+
+// Единицы измерения "Ед.изм" в готовом документе — раньше были зашиты в
+// шаблон (Гкал/ч, т/ч, кг/см2), теперь переносятся из спецификации, как и
+// сами числа (см. историю чата — пользователь явно попросил перенос единиц
+// "по такому же принципу как цифрами"). Если единицу в конкретной
+// спецификации распознать не удалось (например источник — PDF/скан без
+// чёткой структуры ячеек) — используется прежнее значение по умолчанию, то
+// есть поведение НЕ ухудшается по сравнению с тем, что было раньше.
+const UNIT_FALLBACKS = { heat_load_unit: 'Гкал/ч', flow_unit: 'т/ч', dp_unit: 'кг/см2' };
+
+function resolveDynamicUnits(sourceValues) {
+  currentFieldValues.heat_load_unit = sourceValues.heat_load_unit || UNIT_FALLBACKS.heat_load_unit;
+  currentFieldValues.flow_unit = sourceValues.flow_unit || UNIT_FALLBACKS.flow_unit;
+
+  const dpu = String(sourceValues.dp_unit || '').toLowerCase();
+  if (!dpu) {
+    currentFieldValues.dp_unit = UNIT_FALLBACKS.dp_unit; // как раньше: считаем кПа и конвертируем
+  } else if (/кпа|kpa|бар|bar|кгс?\s*\/?\s*см\s*2/.test(dpu)) {
+    currentFieldValues.dp_unit = 'кг/см2'; // опознали -> convertDpToKgfCm2 реально сконвертировал
+  } else {
+    currentFieldValues.dp_unit = sourceValues.dp_unit; // незнакомая единица — конвертации не было, подписываем как в спецификации
   }
 }
 
@@ -338,7 +374,14 @@ function applyParsedValues(sourceValues) {
     if (raw === null || raw === undefined || raw === '') return;
     let value;
     if (f.convert) {
-      const converted = convertValue(raw, f.convert);
+      // convert может быть именем готового конвертера из units.js (строка)
+      // ИЛИ функцией (raw, sourceValues) => число — второе нужно для полей,
+      // где правильный способ конвертации зависит от того, какая единица
+      // измерения реально стоит в спецификации (например потери давления —
+      // см. dp_hot/dp_cold в fieldMap.js), а не всегда одна и та же.
+      const converted = typeof f.convert === 'function'
+        ? f.convert(raw, sourceValues)
+        : convertValue(raw, f.convert);
       value = converted === null ? String(raw) : formatNumber(converted, 3);
     } else if (typeof raw === 'number') {
       value = formatNumber(raw, 3);
@@ -407,6 +450,13 @@ const LETTERHEAD_VALUE_KEYS = [
   'dp_hot', 'dp_cold', 'plates_count', 'passes_count', 'heat_transfer_coef',
   'surface_margin', 'heat_surface', 'model', 'price_unit', 'price_total',
   'dim_a', 'dim_l', 'mass', 'certificates_note',
+  // Единицы измерения — переносятся из спецификации так же, как и сами
+  // числа (resolveDynamicUnits), а не зашиты в шаблон навсегда — см.
+  // историю чата про тепловую нагрузку, перепутанную с Гкал/ч вместо кВт.
+  'heat_load_unit', 'flow_unit', 'dp_unit',
+  // Среда по контурам (вода/пар/гликоль и т.п.) — авто из строки "Среда" в
+  // спецификации, с возможностью правки в форме (heat_medium_hot/cold).
+  'heat_medium_hot', 'heat_medium_cold',
 ];
 
 function buildLetterheadValues() {

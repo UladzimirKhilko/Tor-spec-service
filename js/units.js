@@ -55,6 +55,22 @@ const UNIT_CONVERTERS = {
   identity: (v) => parseNumber(v),
 };
 
+// Потери давления: конвертируем в кгс/см2 (принятый в БСИ формат подачи),
+// но ТОЛЬКО если единица измерения в спецификации реально опознана как
+// кПа/бар/кгс·см2 — раньше единица считалась ВСЕГДА кПа без проверки, и
+// если в спецификации на самом деле было что-то другое, число оставалось
+// прежним, но подписывалось неверно. Для незнакомой единицы возвращаем
+// исходное число без изменений — сотрудник должен свериться сам (см.
+// resolveDynamicUnits в app.js — там же подпись "Ед.изм" ставится по тому
+// же принципу: конвертировали -> "кг/см2", не смогли -> как в спецификации).
+function convertDpToKgfCm2(raw, sourceUnit) {
+  const u = String(sourceUnit || '').toLowerCase();
+  if (!u || /кпа|kpa/.test(u)) return convertValue(raw, 'kpaToKgfCm2');
+  if (/бар|bar/.test(u)) return convertValue(raw, 'barToKgfCm2');
+  if (/кгс?\s*\/?\s*см\s*2/.test(u)) return convertValue(raw, 'identity');
+  return parseNumber(raw);
+}
+
 function convertValue(value, converterName) {
   if (!converterName) return parseNumber(value);
   const fn = UNIT_CONVERTERS[converterName];

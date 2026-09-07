@@ -18,9 +18,7 @@ if (typeof pdfjsLib !== 'undefined') {
 // самый parseBeltoText(), что используется для PDF/OCR — его регулярки
 // уже терпимы к небольшим отличиям в пробелах и полностью справляются
 // с таким чистым текстом.
-async function extractTextFromHtml(file) {
-  const raw = await file.text();
-  const doc = new DOMParser().parseFromString(raw, 'text/html');
+function htmlDocToLines(doc) {
   const rows = Array.from(doc.querySelectorAll('tr'));
   const lines = [];
   rows.forEach((tr) => {
@@ -38,12 +36,69 @@ async function extractTextFromHtml(file) {
   return lines.join('\n');
 }
 
+async function extractTextFromHtml(file) {
+  const raw = await file.text();
+  const doc = new DOMParser().parseFromString(raw, 'text/html');
+  return htmlDocToLines(doc);
+}
+
+// Точный разбор строк "Среда" и единиц измерения ПО ЯЧЕЙКАМ HTML-таблицы —
+// сильнее построчного regex-разбора в beltoParser.js (parseBeltoText),
+// потому что там после того, как ячейки схлопнули в одну строку текста
+// (см. extractTextFromHtml), уже не различить, где кончается одно
+// многословное название среды и начинается другое ("Пропиленгликоль 40%" +
+// "Вода" не разделить надёжно как "текст1 текст2"). Здесь ячейки читаются
+// как есть — "Среда | - | <греющая> | <нагреваемая>" — так же для единицы
+// измерения тепловой нагрузки/расхода/давления, если она стоит в СВОЕЙ
+// ячейке (2-я колонка), а не приклеена к значению.
+//
+// Результат подмешивается в values ПОВЕРХ того, что дал общий построчный
+// разбор (см. app.js) — то есть только для метода 'html-table', где это
+// надёжно; для PDF/OCR такой структуры уже нет, там остаётся эвристика.
+function parseBeltoHtmlStructured(doc) {
+  const result = {};
+  const rows = Array.from(doc.querySelectorAll('tr'));
+  rows.forEach((tr) => {
+    const cells = Array.from(tr.querySelectorAll('td')).map((td) =>
+      (td.textContent || '').replace(/\s+/g, ' ').trim()
+    );
+    if (!cells.length) return;
+    const label = cells[0] || '';
+
+    if (/^Сред[а-я]*$/i.test(label) && cells.length >= 4) {
+      if (cells[2]) result.heat_medium_hot = cells[2];
+      if (cells[3]) result.heat_medium_cold = cells[3];
+      return;
+    }
+    if (/^[ТП]епловая\s+Мо[щш]ность$/i.test(label) && cells[1] && cells[1] !== '-') {
+      result.heat_load_unit = cells[1];
+      return;
+    }
+    if (/^Массов\S*\s+Расход$/i.test(label) && cells[1] && cells[1] !== '-') {
+      result.flow_unit = cells[1];
+      return;
+    }
+    if (/^Потер\S*\s+Напор\S*$/i.test(label) && cells[1] && cells[1] !== '-') {
+      result.dp_unit = cells[1];
+      return;
+    }
+    if (/^Раскладка\s+Канал\S*$/i.test(label) && cells[2]) {
+      result.channel_layout = normalizeChannelLayoutBlock(cells[2]);
+      return;
+    }
+  });
+  return result;
+}
+
 async function extractTextFromFile(file, onProgress) {
   const isHtml = file.type === 'text/html' || /\.html?$/i.test(file.name);
   if (isHtml) {
     onProgress && onProgress('Читаю HTML-отчёт BelTO (точный разбор таблицы, без OCR)...');
-    const text = await extractTextFromHtml(file);
-    return { text, method: 'html-table' };
+    const raw = await file.text();
+    const doc = new DOMParser().parseFromString(raw, 'text/html');
+    const text = htmlDocToLines(doc);
+    const structured = parseBeltoHtmlStructured(doc);
+    return { text, method: 'html-table', structured };
   }
 
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);

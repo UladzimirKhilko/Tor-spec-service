@@ -55,15 +55,16 @@ const TEMPLATES = [
         // (compute вернёт null), сотрудник заполняет его вручную — статус
         // после разбора спецификации явно предупреждает об этом (см. app.js).
         compute: (v) => (v.plates_count && v.channel_layout && v.model_base && v.model_execution)
-          ? `${v.model_base}-${Math.round(parseFloat(v.plates_count))}-${v.model_execution}(${v.channel_layout})`
+          ? `${v.model_base}-${Math.round(parseFloat(v.plates_count))}-${v.model_execution}${buildChannelLayoutMarking(v.channel_layout, v.passes_count)}`
           : null,
         sourceKeys: ['model'], sourceUnit: null, convert: null,
-        notes: 'Собирается автоматически как <марка из бланка>-<кол-во пластин>-<исполнение из бланка>(<раскладка каналов>) — если марка/исполнение не распознались из PDF, заполните вручную' },
+        notes: 'Собирается автоматически как <марка из бланка>-<кол-во пластин>-<исполнение из бланка>(<раскладка каналов>) — для многоходовых аппаратов блок раскладки повторяется по числу ходов, например (9HL+2LL)+(9HL+2LL) для 2 ходов; если марка/исполнение не распознались из PDF, заполните вручную' },
 
       { key: 'heat_load',
-        label: 'Тепловая нагрузка, Гкал/ч',
-        group: 'auto', shapeIds: [136], unit: 'Гкал/ч',
-        sourceKeys: ['heat_power'], sourceUnit: 'Гкал/ч', convert: null, notes: '' },
+        label: 'Тепловая нагрузка',
+        group: 'auto', shapeIds: [136], unit: null,
+        sourceKeys: ['heat_power'], sourceUnit: null, convert: null,
+        notes: 'Единица измерения переносится из спецификации как есть (Гкал/ч, кВт и т.п. — см. поле "Ед.изм" в документе), число не пересчитывается' },
 
       { key: 'temp_graph',
         label: 'Температурный график сетевой воды, °C',
@@ -84,27 +85,40 @@ const TEMPLATES = [
         notes: 'Формат: вход-выход через тире, например 65-90' },
 
       { key: 'flow_hot',
-        label: 'Расход, греющий контур, т/ч',
-        group: 'auto', shapeIds: [94], unit: 'т/ч',
-        sourceKeys: ['flow_hot'], sourceUnit: 'т/ч', convert: null, notes: '' },
+        label: 'Расход, греющий контур',
+        group: 'auto', shapeIds: [94], unit: null,
+        sourceKeys: ['flow_hot'], sourceUnit: null, convert: null,
+        notes: 'Единица измерения переносится из спецификации как есть (см. поле "Ед.изм" в документе)' },
 
       { key: 'flow_cold',
-        label: 'Расход, нагреваемый контур, т/ч',
-        group: 'auto', shapeIds: [747, 350], unit: 'т/ч',
-        sourceKeys: ['flow_cold'], sourceUnit: 'т/ч', convert: null,
-        notes: 'В шаблоне обнаружены две наложенные ячейки (747 и 350) — значение пишется в обе на всякий случай' },
+        label: 'Расход, нагреваемый контур',
+        group: 'auto', shapeIds: [747, 350], unit: null,
+        sourceKeys: ['flow_cold'], sourceUnit: null, convert: null,
+        notes: 'В шаблоне обнаружены две наложенные ячейки (747 и 350) — значение пишется в обе на всякий случай. Единица измерения переносится из спецификации как есть' },
 
+      // ВАЖНО: convert теперь ФУНКЦИЯ, а не имя готового конвертера — единица
+      // измерения потерь давления в разных спецификациях может отличаться
+      // (кПа/бар/уже кгс/см2), и раньше программа слепо считала её всегда
+      // кПа. Реальная единица берётся из спецификации (dp_unit, см.
+      // beltoParser.js/extract.js) и подставляется в колонку "Ед.изм"
+      // документа (resolveDynamicUnits в app.js) — конвертация в кгс/см2
+      // (принятый в БСИ формат подачи) применяется, только если единица
+      // ОПОЗНАНА как кПа/бар/кгс/см2; для незнакомой единицы конвертация не
+      // выполняется (чтобы не домножить на неверный коэффициент), значение
+      // и её собственная подпись переносятся как есть.
       { key: 'dp_hot',
         label: 'Потери давления, греющий контур, кг/см2',
         group: 'auto', shapeIds: [95], unit: 'кг/см2',
-        sourceKeys: ['dp_hot'], sourceUnit: 'кПа', convert: 'kpaToKgfCm2',
-        notes: 'В спецификации BelTO потери напора обычно в кПа — конвертируется автоматически в кгс/см2' },
+        sourceKeys: ['dp_hot'], sourceUnit: 'кПа',
+        convert: (raw, sourceValues) => convertDpToKgfCm2(raw, sourceValues && sourceValues.dp_unit),
+        notes: 'Конвертируется в кгс/см2, если единица в спецификации опознана (кПа/бар) — иначе переносится как в спецификации' },
 
       { key: 'dp_cold',
         label: 'Потери давления, нагреваемый контур, кг/см2',
         group: 'auto', shapeIds: [15], unit: 'кг/см2',
-        sourceKeys: ['dp_cold'], sourceUnit: 'кПа', convert: 'kpaToKgfCm2',
-        notes: 'В спецификации BelTO потери напора обычно в кПа — конвертируется автоматически в кгс/см2' },
+        sourceKeys: ['dp_cold'], sourceUnit: 'кПа',
+        convert: (raw, sourceValues) => convertDpToKgfCm2(raw, sourceValues && sourceValues.dp_unit),
+        notes: 'Конвертируется в кгс/см2, если единица в спецификации опознана (кПа/бар) — иначе переносится как в спецификации' },
 
       { key: 'plates_count',
         label: 'Количество пластин, шт',
@@ -148,14 +162,26 @@ const TEMPLATES = [
         notes: 'Берётся вес заполненного теплообменника, если есть в спецификации, иначе — пустого' },
 
       { key: 'dim_l',
-        label: 'L, мм (длина по патрубкам)',
+        label: 'L, мм (длина)',
         group: 'manual', shapeIds: [748], unit: 'мм',
         notes: 'В спецификации BelTO обычно отсутствует, зависит от исполнения рамы — проверьте по чертежу/каталогу' },
 
       { key: 'dim_a',
-        label: 'A, мм',
+        label: 'A, мм (размер стяжки)',
         group: 'manual', shapeIds: [], unit: 'мм',
         notes: 'В спецификации BelTO обычно отсутствует, зависит от исполнения рамы — проверьте по чертежу/каталогу' },
+
+      { key: 'heat_medium_hot',
+        label: 'Среда, греющий контур',
+        group: 'auto', shapeIds: [], unit: null,
+        sourceKeys: ['heat_medium_hot'], sourceUnit: null, convert: null,
+        notes: 'Берётся из строки "Среда" в спецификации (например "Вода") — для HTML-отчёта точно по ячейке, для PDF/скана — если распозналось однозначно' },
+
+      { key: 'heat_medium_cold',
+        label: 'Среда, нагреваемый контур',
+        group: 'auto', shapeIds: [], unit: null,
+        sourceKeys: ['heat_medium_cold'], sourceUnit: null, convert: null,
+        notes: 'Берётся из строки "Среда" в спецификации (например "Вода") — для HTML-отчёта точно по ячейке, для PDF/скана — если распозналось однозначно' },
 
       { key: 'certificates_note',
         label: 'Блок "Примечание" (сертификаты, ТР ТС, материалы)',
