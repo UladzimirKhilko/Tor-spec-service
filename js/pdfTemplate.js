@@ -41,10 +41,10 @@ function loadLetterheadOffset(hash) {
   }
 }
 
-function saveLetterheadOffset(hash, fileName, offsetXFrac, offsetYFrac) {
+function saveLetterheadOffset(hash, fileName, offsetXFrac, offsetYFrac, cropHeightFrac) {
   try {
     localStorage.setItem(letterheadOffsetStorageKey(hash), JSON.stringify({
-      hash, fileName, offsetXFrac, offsetYFrac, savedAt: new Date().toISOString(),
+      hash, fileName, offsetXFrac, offsetYFrac, cropHeightFrac, savedAt: new Date().toISOString(),
     }));
   } catch (e) {
     console.warn('Не удалось сохранить сдвиг в localStorage (место кончилось?)', e);

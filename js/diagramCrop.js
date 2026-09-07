@@ -8,17 +8,33 @@
  * линейки бланков БСИ) через pdf.js в canvas и вырезает из неё PNG.
  */
 
+// Высота области вырезки по умолчанию (как доля высоты страницы) — просто
+// исходная высота DIAGRAM_BOX. Разным моделям (особенно многоходовым —
+// 2х, 2хЦ, 3х и т.п.) в бланке иногда добавляется ещё и схема "Компоновка
+// пластин" под основной картинкой — на странице она может оказаться прямо
+// под DIAGRAM_BOX, и при том же самом окне вырезки частично попадает в
+// кадр. Поле "Высота картинки" в форме (app.js) позволяет сотруднику
+// подрезать вырезку под конкретный бланк, не трогая код.
+const DIAGRAM_BOX_DEFAULT_HEIGHT_FRAC = DIAGRAM_BOX.yFrac1 - DIAGRAM_BOX.yFrac0;
+
 /**
  * @param {ArrayBuffer} pdfBytes
  * @param {number} offsetXFrac - та же поправка смещения, что и для полей
  *   (см. buildLetterheadMapping/customTplOffsetXFrac в app.js) — на случай
  *   если у конкретного загруженного файла вёрстка на пару мм отличается.
  * @param {number} offsetYFrac
+ * @param {number} [heightFrac] - высота окна вырезки (доля высоты страницы,
+ *   считается от верхнего края DIAGRAM_BOX + offsetYFrac). По умолчанию —
+ *   родная высота DIAGRAM_BOX; сотрудник может её уменьшить/увеличить в форме,
+ *   если в кадр попадает лишнее снизу (или наоборот, картинка обрезана).
  * @returns {Promise<{bytes: Uint8Array, widthPx: number, heightPx: number}>}
  */
-async function cropDiagramFromPdf(pdfBytes, offsetXFrac, offsetYFrac) {
+async function cropDiagramFromPdf(pdfBytes, offsetXFrac, offsetYFrac, heightFrac) {
   const dx = offsetXFrac || 0;
   const dy = offsetYFrac || 0;
+  const hFrac = (heightFrac === undefined || heightFrac === null || heightFrac <= 0)
+    ? DIAGRAM_BOX_DEFAULT_HEIGHT_FRAC
+    : heightFrac;
   const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
   const page = await pdf.getPage(1);
   // scale 3 -> ~280 DPI на области картинки, с запасом для чёткости при
@@ -36,7 +52,7 @@ async function cropDiagramFromPdf(pdfBytes, offsetXFrac, offsetYFrac) {
   const x0 = (box.xFrac0 + dx) * canvas.width;
   const x1 = (box.xFrac1 + dx) * canvas.width;
   const y0 = (box.yFrac0 + dy) * canvas.height;
-  const y1 = (box.yFrac1 + dy) * canvas.height;
+  const y1 = y0 + hFrac * canvas.height;
   const cropW = Math.max(1, Math.round(x1 - x0));
   const cropH = Math.max(1, Math.round(y1 - y0));
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>БСИ — короткие спецификации теплообменников</title>
-<link rel="stylesheet" href="css/style.css?v=28" />
+<link rel="stylesheet" href="css/style.css?v=29" />
 
 <!-- Библиотеки — собраны локально в vendor/, CDN не требуется для загрузки самого приложения.
      Исключение: Tesseract.js при OCR-распознавании сам подтягивает языковые данные
@@ -31,7 +31,9 @@
       <div class="offset-row">
         <label>Сдвиг по X, мм <input type="number" id="offsetXInput" value="0" step="0.5" /></label>
         <label>Сдвиг по Y, мм <input type="number" id="offsetYInput" value="0" step="0.5" /></label>
+        <label>Высота картинки, мм <input type="number" id="cropHeightInput" step="1" /></label>
       </div>
+      <div class="hint">Картинка вырезается из PDF-бланка по фиксированному окну и автоматически вписывается в отведённое место в документе — документ всегда остаётся на одном листе A4. Если снизу в кадр попадает лишнее (например схема «Компоновка пластин» у многоходовых моделей) — уменьшите «Высоту картинки»; если наоборот, картинка обрезана — увеличьте.</div>
       <div class="actions-row">
         <button id="btnCheckAlignment" class="secondary">Обновить превью картинки</button>
       </div>
@@ -87,17 +89,17 @@
 <script src="vendor/pizzip.min.js"></script>
 <script src="vendor/docxtemplater.min.js"></script>
 <script src="vendor/docxtemplater-image-module-free.js"></script>
-<script src="js/config.js?v=28"></script>
-<script src="js/units.js?v=28"></script>
-<script src="js/fieldMap.js?v=28"></script>
-<script src="js/beltoParser.js?v=28"></script>
-<script src="js/extract.js?v=28"></script>
-<script src="js/pdfTemplate.js?v=28"></script>
-<script src="js/builtinPdfMapping.js?v=28"></script>
-<script src="js/docxTemplate.js?v=28"></script>
-<script src="js/diagramCrop.js?v=28"></script>
-<script src="js/modelExtract.js?v=28"></script>
-<script src="js/sheetsLog.js?v=28"></script>
-<script src="js/app.js?v=28"></script>
+<script src="js/config.js?v=29"></script>
+<script src="js/units.js?v=29"></script>
+<script src="js/fieldMap.js?v=29"></script>
+<script src="js/beltoParser.js?v=29"></script>
+<script src="js/extract.js?v=29"></script>
+<script src="js/pdfTemplate.js?v=29"></script>
+<script src="js/builtinPdfMapping.js?v=29"></script>
+<script src="js/docxTemplate.js?v=29"></script>
+<script src="js/diagramCrop.js?v=29"></script>
+<script src="js/modelExtract.js?v=29"></script>
+<script src="js/sheetsLog.js?v=29"></script>
+<script src="js/app.js?v=29"></script>
 </body>
 </html>

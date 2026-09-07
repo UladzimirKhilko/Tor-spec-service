@@ -84,8 +84,24 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
   // Целевая ширина картинки — вровень с шириной ячейки в шаблоне (538.58pt,
   // см. builtinPdfMapping.js LETTERHEAD_PAGE/константы верстки) переведённая
   // в пиксели при 96 dpi (стандарт OOXML: 1px = 9525 EMU = 1/96 дюйма).
+  //
+  // ВАЖНО: раньше картинка масштабировалась ТОЛЬКО по ширине — высота
+  // считалась из пропорций исходной картинки. У разных моделей вырезанная
+  // из PDF-бланка картинка бывает разной по пропорциям (например у моделей
+  // с несколькими ходами добавляется ещё и схема "Компоновка пластин" —
+  // картинка получается заметно выше), и при масштабировании только по
+  // ширине такая картинка оказывалась выше отведённой под неё строки
+  // таблицы (~248pt, см. templates/BSI-letterhead-template.docx) — снизу
+  // обрезалась или документ уезжал на 2-ю страницу. Теперь картинка всегда
+  // вписывается В ОБЕ стороны (по ширине И по высоте, с сохранением
+  // пропорций) — это гарантирует, что документ остаётся на одном листе A4
+  // при любой картинке. Если по факту важной части не хватило места —
+  // сотрудник может подрезать саму область вырезки на шаге 1 ("Высота
+  // картинки, мм"), чтобы в кадр не попадало лишнее (см. app.js/diagramCrop.js).
   const TARGET_WIDTH_PT = 530;
+  const TARGET_HEIGHT_PT = 240;
   const TARGET_WIDTH_PX = Math.round((TARGET_WIDTH_PT / 72) * 96);
+  const TARGET_HEIGHT_PX = Math.round((TARGET_HEIGHT_PT / 72) * 96);
 
   // ВАЖНО: значение тега {%diagram_image} должно быть чем-то отличным от
   // "object" (docxtemplater-image-module-free трактует объект/массив в
@@ -100,9 +116,9 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
       return diagramImage.bytes;
     },
     getSize() {
-      if (!diagramImage.widthPx) return [TARGET_WIDTH_PX, Math.round(TARGET_WIDTH_PX * 0.46)];
-      const scale = TARGET_WIDTH_PX / diagramImage.widthPx;
-      return [TARGET_WIDTH_PX, Math.round(diagramImage.heightPx * scale)];
+      if (!diagramImage.widthPx || !diagramImage.heightPx) return [TARGET_WIDTH_PX, Math.round(TARGET_WIDTH_PX * 0.46)];
+      const scale = Math.min(TARGET_WIDTH_PX / diagramImage.widthPx, TARGET_HEIGHT_PX / diagramImage.heightPx);
+      return [Math.round(diagramImage.widthPx * scale), Math.round(diagramImage.heightPx * scale)];
     },
   });
 

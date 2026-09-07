@@ -20,6 +20,13 @@ let customTplHash = null;
 let customTplFileName = null;
 let customTplOffsetXFrac = 0;
 let customTplOffsetYFrac = 0;
+// Высота окна вырезки картинки (доля высоты страницы) — по умолчанию родная
+// высота DIAGRAM_BOX (см. diagramCrop.js). У некоторых моделей (многоходовые
+// — 2х, 2хЦ, 3х и т.п.) в бланке под основной картинкой сразу идёт ещё одна
+// схема ("Компоновка пластин"), которая может частично попасть в кадр —
+// сотрудник уменьшает это значение в форме, чтобы обрезать вырезку выше
+// лишнего содержимого (см. поле "Высота картинки, мм").
+let customTplCropHeightFrac = DIAGRAM_BOX_DEFAULT_HEIGHT_FRAC;
 
 const PT_PER_MM = 2.8346456693;
 const mmToXFrac = (mm) => (Number(mm) || 0) * PT_PER_MM / LETTERHEAD_PAGE.width;
@@ -62,14 +69,19 @@ function initCustomTemplateUpload() {
   });
   el('offsetXInput').addEventListener('input', readOffsetInputs);
   el('offsetYInput').addEventListener('input', readOffsetInputs);
+  el('cropHeightInput').addEventListener('input', readOffsetInputs);
   el('btnCheckAlignment').addEventListener('click', handleUpdateDiagramPreview);
 }
 
 function readOffsetInputs() {
   customTplOffsetXFrac = mmToXFrac(el('offsetXInput').value);
   customTplOffsetYFrac = mmToYFrac(el('offsetYInput').value);
+  const cropHeightMm = parseFloat(el('cropHeightInput').value);
+  customTplCropHeightFrac = (Number.isFinite(cropHeightMm) && cropHeightMm > 0)
+    ? mmToYFrac(cropHeightMm)
+    : DIAGRAM_BOX_DEFAULT_HEIGHT_FRAC;
   if (customTplHash) {
-    saveLetterheadOffset(customTplHash, customTplFileName, customTplOffsetXFrac, customTplOffsetYFrac);
+    saveLetterheadOffset(customTplHash, customTplFileName, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac);
   }
 }
 
@@ -92,8 +104,10 @@ async function handleCustomTplUpload(file) {
     const existing = loadLetterheadOffset(hash);
     customTplOffsetXFrac = existing ? existing.offsetXFrac : 0;
     customTplOffsetYFrac = existing ? existing.offsetYFrac : 0;
+    customTplCropHeightFrac = (existing && existing.cropHeightFrac) ? existing.cropHeightFrac : DIAGRAM_BOX_DEFAULT_HEIGHT_FRAC;
     el('offsetXInput').value = xFracToMm(customTplOffsetXFrac).toFixed(1);
     el('offsetYInput').value = yFracToMm(customTplOffsetYFrac).toFixed(1);
+    el('cropHeightInput').value = yFracToMm(customTplCropHeightFrac).toFixed(1);
 
     setStatus(
       'customTplStatus',
@@ -122,8 +136,8 @@ async function handleUpdateDiagramPreview() {
   readOffsetInputs();
   setStatus('diagramPreviewStatus', 'Вырезаю картинку из PDF...');
   try {
-    const crop = await cropDiagramFromPdf(customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac);
-    const key = `custom:${customTplHash}:${customTplOffsetXFrac}:${customTplOffsetYFrac}`;
+    const crop = await cropDiagramFromPdf(customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac);
+    const key = `custom:${customTplHash}:${customTplOffsetXFrac}:${customTplOffsetYFrac}:${customTplCropHeightFrac}`;
     cachedDiagramCrop = { key, crop };
     const blob = new Blob([crop.bytes], { type: 'image/png' });
     const url = URL.createObjectURL(blob);
@@ -372,12 +386,12 @@ async function handleGenerateCustomDocx() {
   try {
     readOffsetInputs();
     const values = buildLetterheadValues();
-    const key = `custom:${customTplHash}:${customTplOffsetXFrac}:${customTplOffsetYFrac}`;
+    const key = `custom:${customTplHash}:${customTplOffsetXFrac}:${customTplOffsetYFrac}:${customTplCropHeightFrac}`;
     let diagram;
     if (cachedDiagramCrop && cachedDiagramCrop.key === key) {
       diagram = cachedDiagramCrop.crop;
     } else {
-      diagram = await cropDiagramFromPdf(customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac);
+      diagram = await cropDiagramFromPdf(customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac);
       cachedDiagramCrop = { key, crop: diagram };
     }
     const templateBytes = await getDocxTemplateBytes();
