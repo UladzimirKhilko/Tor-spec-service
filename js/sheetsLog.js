@@ -25,3 +25,30 @@ async function logToSheet(entry) {
     return { ok: false, error: e };
   }
 }
+
+/*
+ * Автономер расчёта: инженер один раз вводит первый номер вручную, дальше
+ * при каждом новом расчёте сервис подсказывает следующий — берёт последний
+ * записанный номер прямо из листа "Журнал" (см. doGet в apps-script/Code.gs),
+ * чтобы номер был общим для всех, кто пользуется сервисом, а не только для
+ * этого браузера.
+ *
+ * В отличие от записи (logToSheet, POST), здесь нужен именно ОТВЕТ сервера —
+ * поэтому используем обычный (не "no-cors") GET-запрос: Apps Script Web App
+ * отдаёт финальный ответ с домена script.googleusercontent.com, который
+ * браузер разрешает читать из fetch() без дополнительной настройки CORS
+ * (в отличие от POST с JSON, который упирается в CORS-preflight — поэтому
+ * запись сделана иначе, см. logToSheet выше).
+ */
+async function fetchNextCalcNumber() {
+  if (!APPS_SCRIPT_URL) return { ok: false, skipped: true };
+  try {
+    const res = await fetch(`${APPS_SCRIPT_URL}?action=nextNumber`, { method: 'GET' });
+    const data = await res.json();
+    if (data && data.ok) return { ok: true, nextNumber: data.nextNumber };
+    return { ok: false };
+  } catch (e) {
+    console.warn('Не удалось получить следующий номер расчёта из журнала:', e);
+    return { ok: false, error: e };
+  }
+}
