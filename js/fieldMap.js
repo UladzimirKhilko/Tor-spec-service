@@ -230,10 +230,24 @@ const TEMPLATES = [
         notes: 'Собирается автоматически как <марка из бланка>-<кол-во пластин>-<исполнение>(<раскладка II ступени>)+(<раскладка I ступени>), например ТОР-41-115-2хБГВ(24LL)+(33LL)' },
 
       { key: 'heat_load_gvs',
-        label: 'Тепловая нагрузка ГВС',
+        label: 'Тепловая нагрузка ГВС (Исходные данные — сумма по ступеням)',
         group: 'auto', shapeIds: [], unit: null,
         sourceKeys: ['heat_load_gvs'], sourceUnit: null, convert: null,
-        notes: 'Сумма мощностей I и II ступени из спецификации; единица измерения — как в спецификации' },
+        notes: 'Сумма мощностей I и II ступени из спецификации; единица измерения — как в спецификации. Печатается в "Исходных данных"' },
+
+      // Те же мощности, но РАЗДЕЛЁННЫЕ по ступеням — для строки "Тепловая
+      // нагрузка ГВС" в разделе "РАСЧЁТ" (в отличие от heat_load_gvs выше,
+      // который печатается ТОЛЬКО в "Исходных данных" как общая сумма).
+      { key: 'heat_load_gvs_s2',
+        label: 'Тепловая нагрузка ГВС, II ступень (Расчёт)',
+        group: 'auto', shapeIds: [], unit: null,
+        sourceKeys: ['heat_load_gvs_s2'], sourceUnit: null, convert: null,
+        notes: 'Мощность II ступени из спецификации, 3 знака после точки. Печатается в разделе "Расчёт"' },
+      { key: 'heat_load_gvs_s1',
+        label: 'Тепловая нагрузка ГВС, I ступень (Расчёт)',
+        group: 'auto', shapeIds: [], unit: null,
+        sourceKeys: ['heat_load_gvs_s1'], sourceUnit: null, convert: null,
+        notes: 'Мощность I ступени из спецификации, 3 знака после точки. Печатается в разделе "Расчёт"' },
 
       { key: 'heat_medium_s2_hot', label: 'Среда, II ступень, греющий контур',    group: 'auto', shapeIds: [], unit: null, sourceKeys: ['heat_medium_hot'], sourceUnit: null, convert: null, notes: 'Из строки "Среда" в спецификации' },
       { key: 'heat_medium_s2_cold', label: 'Среда, II ступень, нагреваемый контур', group: 'auto', shapeIds: [], unit: null, sourceKeys: ['heat_medium_cold'], sourceUnit: null, convert: null, notes: 'Из строки "Среда" в спецификации' },

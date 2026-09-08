@@ -5,4 +5,4 @@
  * раздел "Журнал расчётов"). Пока поле пустое — запись в журнал просто
  * пропускается, всё остальное (генерация .vsdx и PDF) работает без него.
  */
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw2w74HbFVJeWe_gLxi1jppMWZjszr2p9HlZgqdYt8J7tJgtJHERVBtfqnmciOmaP9IBA/exec'; // например: 'https://script.google.com/macros/s/XXXXXXXX/exec'
+const APPS_SCRIPT_URL = ''; // например: 'https://script.google.com/macros/s/XXXXXXXX/exec'

@@ -425,11 +425,21 @@ function deriveMonoblockValues(v) {
 
   // Тепловая нагрузка ГВС — 3 знака после точки, всегда (даже с нулями на
   // конце) — по просьбе пользователя.
+  //
+  // В документе эта надпись встречается ДВАЖДЫ: в "ИСХОДНЫХ ДАННЫХ" — это
+  // ОБЩАЯ нагрузка на весь аппарат (обе ступени вместе, heat_load_gvs), а
+  // в "РАСЧЁТЕ" — та же нагрузка, но РАЗДЕЛЁННАЯ по ступеням, как в самой
+  // спецификации (heat_load_gvs_s2/heat_load_gvs_s1, по аналогии с
+  // остальными строками расчёта — "Расход", "Потери давления" и т.п.).
+  // Замечено пользователем 08.09.2026: раньше в "РАСЧЁТЕ" по ошибке
+  // печаталась та же ОБЩАЯ сумма, что и в "Исходных данных".
   if (has(v.heat_power_s1) && has(v.heat_power_s2)) {
     v.heat_load_gvs = formatFixed(num(v.heat_power_s1) + num(v.heat_power_s2), 3);
   } else if (has(v.heat_power_s1) || has(v.heat_power_s2)) {
     v.heat_load_gvs = formatFixed(has(v.heat_power_s1) ? num(v.heat_power_s1) : num(v.heat_power_s2), 3);
   }
+  if (has(v.heat_power_s2)) v.heat_load_gvs_s2 = formatFixed(num(v.heat_power_s2), 3);
+  if (has(v.heat_power_s1)) v.heat_load_gvs_s1 = formatFixed(num(v.heat_power_s1), 3);
 
   // Температурный график сетевой воды у моноблока вводится инженером вручную
   // (в спецификации нет) — производное значение НЕ подставляем. Точка

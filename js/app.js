@@ -627,7 +627,7 @@ const LETTERHEAD_VALUE_KEYS = [
 // (нагрузка отопления, температурный график в точке излома).
 const MONOBLOCK_VALUE_KEYS = [
   'site', 'customer', 'contact_person', 'contact_info',
-  'heat_load_gvs', 'heat_load_heating', 'heat_load_heating_unit', 'temp_graph', 'temp_graph_break',
+  'heat_load_gvs', 'heat_load_gvs_s2', 'heat_load_gvs_s1', 'heat_load_heating', 'heat_load_heating_unit', 'temp_graph', 'temp_graph_break',
   'heat_medium_s2_hot', 'heat_medium_s2_cold', 'heat_medium_s1_hot', 'heat_medium_s1_cold',
   'temp_s2_hot', 'temp_s2_cold', 'temp_s1_hot', 'temp_s1_cold',
   'flow_s2_hot', 'flow_s2_cold', 'flow_s1_hot', 'flow_s1_cold',
