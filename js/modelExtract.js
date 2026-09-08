@@ -105,3 +105,130 @@ async function extractModelPartsFromPdf(pdfBytes) {
     return null;
   }
 }
+
+// На реальных бланках температура часто напечатана с приподнятой буквой
+// "о" перед "С" (типографская имитация значка градуса — "150 оС"), а не
+// настоящим символом "°" — из-за меньшей высоты и смещённой вверх базовой
+// линии pdf.js нередко выносит эту "о" в отдельную "строку" при разборе по
+// координатам. Склеиваем такие места обратно в нормальный "°C" — та же
+// проблема и то же решение, что и для верхних меток в самих
+// Word-шаблонах (см. gen_docx3.py/gen_docx_monoblock.py).
+function fixDegreeArtifacts(text) {
+  let t = text;
+  // 1) "о" на отдельной строке прямо перед строкой вида "...<число> С".
+  t = t.replace(/(^|\n)[оО]\n([^\n]*\d)\s*[СC](?=\W|$)/g, (full, lead, before) => lead + before.replace(/\s+$/, '') + ' °C');
+  // 2) "о" и "С"/"C" уже в одной строке рядом с числом ("150 оС", "150 о С").
+  t = t.replace(/(\d)\s*[оО]\s*[СC](?=\W|$)/g, '$1 °C');
+  // 3) Общий узор "о С" без числа рядом (на всякий случай).
+  t = t.replace(/\bо\s+С\b/g, '°C');
+  return t;
+}
+
+/*
+ * Извлекает текст, реально напечатанный в области блока "Примечание"
+ * (сертификаты, ТР ТС, материал пластин, рабочие параметры) на КОНКРЕТНОМ
+ * загруженном PDF-бланке — вместо того, чтобы всегда подставлять один и тот
+ * же текст-образец (DEFAULT_CERTIFICATES_TEXT, builtinPdfMapping.js) для
+ * любого файла. По просьбе пользователя: этот текст должен каждый раз
+ * забираться из самого бланка — в поле формы для проверки и, при
+ * необходимости, редактирования — а не быть "зашитым" один раз.
+ *
+ * Область — та же рамка, что и LETTERHEAD_FIELDS.certificates_note.redact
+ * (builtinPdfMapping.js), с небольшим запасом по краям (на случай, если
+ * верстка конкретного файла на долю миллиметра отличается от эталона).
+ * Берём координаты текстовых фрагментов через pdf.js (page.getTextContent)
+ * и оставляем только те, что попадают в эту область; группируем их в строки
+ * по Y (как getPdfPageLinesWithPos), а увеличенный вертикальный разрыв
+ * между соседними строками (по сравнению с обычным межстрочным шагом на
+ * этом же бланке) превращаем обратно в пустую строку-разделитель — иначе
+ * абзацы образца ("Сертификат...", "ТР ТС...", "Материал пластин...")
+ * слились бы в один сплошной блок без отступов.
+ *
+ * @param {ArrayBuffer} pdfBytes - байты загруженного PDF-бланка
+ * @returns {Promise<string | null>} - текст (с переводами строк) или null,
+ *   если в этой области на бланке текста не нашлось (тогда вызывающий код
+ *   в app.js откатывается на DEFAULT_CERTIFICATES_TEXT).
+ */
+async function extractCertificatesTextFromPdf(pdfBytes) {
+  try {
+    const box = LETTERHEAD_FIELDS.certificates_note.redact;
+    const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+    const page = await pdf.getPage(1);
+    const content = await page.getTextContent();
+    const viewport = page.getViewport({ scale: 1 });
+    const pageWidth = viewport.width;
+    const pageHeight = viewport.height;
+
+    const marginFrac = 0.01;
+    const xFrac0 = box.xFrac - marginFrac;
+    const xFrac1 = box.xFrac + box.wFrac + marginFrac;
+    const yFrac0 = box.yFrac - marginFrac;
+    const yFrac1 = box.yFrac + box.hFrac + marginFrac;
+
+    const items = content.items
+      .filter((it) => it.str && it.str.trim() !== '')
+      .map((it) => ({
+        str: it.str,
+        x: it.transform[4],
+        y: it.transform[5],
+        h: Math.abs(it.transform[3]) || 10,
+        w: it.width || 0,
+      }))
+      .filter((it) => {
+        const xf = it.x / pageWidth;
+        const topFrac = (pageHeight - (it.y + it.h)) / pageHeight;
+        return xf >= xFrac0 && xf <= xFrac1 && topFrac >= yFrac0 && topFrac <= yFrac1;
+      });
+    if (!items.length) return null;
+
+    const yTol = 2;
+    const lines = [];
+    items.forEach((it) => {
+      let line = lines.find((l) => Math.abs(l.y - it.y) < yTol);
+      if (!line) { line = { y: it.y, items: [] }; lines.push(line); }
+      line.items.push(it);
+    });
+    lines.sort((a, b) => b.y - a.y);
+    lines.forEach((l) => l.items.sort((a, b) => a.x - b.x));
+
+    const rawLines = lines.map((l) => {
+      let s = '';
+      let prevEnd = null;
+      l.items.forEach((it) => {
+        if (prevEnd !== null && it.x - prevEnd > 1.5) s += ' ';
+        s += it.str;
+        prevEnd = it.x + it.w;
+      });
+      return s.trim();
+    });
+
+    // Обычный межстрочный шаг на этом бланке — медиана расстояний между
+    // соседними строками; заметно больший разрыв (абзацный отступ в
+    // образце) восстанавливаем как одну пустую строку.
+    const deltas = [];
+    for (let i = 1; i < lines.length; i++) deltas.push(lines[i - 1].y - lines[i].y);
+    deltas.sort((a, b) => a - b);
+    const median = deltas.length ? deltas[Math.floor(deltas.length / 2)] : 0;
+
+    const out = [];
+    rawLines.forEach((text, i) => {
+      if (i > 0 && median > 0) {
+        const delta = lines[i - 1].y - lines[i].y;
+        if (delta > median * 1.6) out.push('');
+      }
+      out.push(text);
+    });
+
+    // Заголовок "Примечание" на некоторых бланках напечатан чуть внутри
+    // рамки (а не строго над ней, как в эталоне) и попадает в вырезку —
+    // сам по себе он не часть текста сертификатов, убираем его отдельной
+    // строкой, если он есть.
+    const withoutHeading = out.filter((line) => !/^примечание\s*:?$/i.test(line.trim()));
+
+    const result = fixDegreeArtifacts(withoutHeading.join('\n')).trim();
+    return result || null;
+  } catch (e) {
+    console.warn('Не удалось извлечь текст блока "Примечание" из PDF-бланка', e);
+    return null;
+  }
+}

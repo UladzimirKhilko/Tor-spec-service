@@ -42,13 +42,36 @@ const yFracToMm = (frac) => (frac * LETTERHEAD_PAGE.height) / PT_PER_MM;
 
 const el = (id) => document.getElementById(id);
 
-// Блок "Примечание" (сертификаты и т.п.) заранее заполняется текстом из
-// образца — чтобы пользователь мог его сразу проверить и, если нужно,
-// поправить, а не начинать с пустого поля.
+// Блок "Примечание" (сертификаты и т.п.) заранее заполняется текстом —
+// чтобы пользователь мог его сразу проверить и, если нужно, поправить, а не
+// начинать с пустого поля. По просьбе пользователя текст каждый раз
+// забирается из САМОГО загруженного PDF-бланка (extractCertificatesTextFromPdf,
+// modelExtract.js) — а не подставляется один и тот же образец для любого
+// файла: у разных бланков номер/дата сертификата и формулировки могут
+// отличаться. Пока PDF ещё читается (или если в его области ничего не
+// нашлось — нестандартный бланк), полем остаётся текст-образец
+// (DEFAULT_CERTIFICATES_TEXT, builtinPdfMapping.js) как запасной вариант.
 function applyDefaultFieldValues(fields) {
   currentFieldValues = {};
   if (fields.some((f) => f.key === 'certificates_note')) {
     currentFieldValues['certificates_note'] = DEFAULT_CERTIFICATES_TEXT;
+  }
+}
+
+// Пытается заменить текст-образец в certificates_note на текст, реально
+// напечатанный в этой области на загруженном PDF-бланке (customTplBytes).
+// Вызывается ПОСЛЕ applyDefaultFieldValues (тот уже поставил образец как
+// подстраховку) — если извлечение ничего не нашло/не удалось, образец
+// так и остаётся. Ничего не делает, если у текущего набора полей нет
+// certificates_note (шаблон без этого блока) или PDF-бланк ещё не загружен.
+async function refreshCertificatesFromPdf(fields) {
+  if (!fields.some((f) => f.key === 'certificates_note')) return;
+  if (!customTplBytes) return;
+  try {
+    const extracted = await extractCertificatesTextFromPdf(customTplBytes);
+    if (extracted) currentFieldValues['certificates_note'] = extracted;
+  } catch (e) {
+    console.warn('Не удалось обновить блок "Примечание" из PDF-бланка', e);
   }
 }
 
@@ -106,6 +129,7 @@ async function handleCustomTplUpload(file) {
     // handleFile переключит его на монобблочный, если понадобится (см. ниже).
     currentTemplate = { id: 'custom-letterhead', title: file.name, fields: TEMPLATES[0].fields, docxFile: NORMAL_LETTERHEAD_DOCX, mode: 'normal' };
     applyDefaultFieldValues(currentTemplate.fields);
+    await refreshCertificatesFromPdf(currentTemplate.fields);
     renderForm();
     el('formSection').style.display = '';
     el('actionsSection').style.display = '';
@@ -306,11 +330,13 @@ async function handleFile(file) {
       currentTemplate.docxFile = monoblockTemplate.file;
       currentTemplate.mode = 'monoblock';
       applyDefaultFieldValues(currentTemplate.fields);
+      await refreshCertificatesFromPdf(currentTemplate.fields);
     } else if (!wantMonoblock && currentTemplate.mode !== 'normal') {
       currentTemplate.fields = TEMPLATES[0].fields;
       currentTemplate.docxFile = NORMAL_LETTERHEAD_DOCX;
       currentTemplate.mode = 'normal';
       applyDefaultFieldValues(currentTemplate.fields);
+      await refreshCertificatesFromPdf(currentTemplate.fields);
     }
     if (wantMonoblock) deriveMonoblockValues(values);
 
@@ -442,9 +468,9 @@ function applyParsedValues(sourceValues) {
       const converted = typeof f.convert === 'function'
         ? f.convert(raw, sourceValues)
         : convertValue(raw, f.convert);
-      value = converted === null ? String(raw) : formatNumber(converted, 3);
+      value = converted === null ? String(raw) : (f.decimals !== undefined ? formatFixed(converted, f.decimals) : formatNumber(converted, 3));
     } else if (typeof raw === 'number') {
-      value = formatNumber(raw, 3);
+      value = f.decimals !== undefined ? formatFixed(raw, f.decimals) : formatNumber(raw, 3);
     } else {
       value = String(raw);
     }
@@ -478,6 +504,20 @@ function renderForm() {
     else input.rows = 10;
     input.value = currentFieldValues[f.key] || '';
     input.addEventListener('input', () => { currentFieldValues[f.key] = input.value; });
+    // Суммы (цена за шт / общая сумма) — по просьбе пользователя всегда
+    // вводятся и переносятся в документ с ровно 2 знаками после точки.
+    // Реформатируем значение сразу при уходе фокуса с поля, чтобы инженер
+    // видел итоговый вид числа ещё в форме, а не только в готовом документе.
+    if (f.key === 'price_unit' || f.key === 'price_total') {
+      input.addEventListener('blur', () => {
+        const n = parseNumber(input.value);
+        if (n !== null) {
+          const formatted = formatFixed(n, 2);
+          input.value = formatted;
+          currentFieldValues[f.key] = formatted;
+        }
+      });
+    }
     wrap.appendChild(input);
 
     if (f.notes) {
@@ -544,6 +584,15 @@ function buildLetterheadValues() {
   const keys = isMonoblock ? MONOBLOCK_VALUE_KEYS : LETTERHEAD_VALUE_KEYS;
   const values = {};
   keys.forEach((key) => { values[key] = currentFieldValues[key] || ''; });
+  // Защитное форматирование сумм — на случай, если поле не потеряло фокус
+  // (blur в renderForm) перед генерацией документа: суммы всегда должны
+  // попадать в документ с ровно 2 знаками после точки.
+  ['price_unit', 'price_total'].forEach((key) => {
+    if (values[key]) {
+      const n = parseNumber(values[key]);
+      if (n !== null) values[key] = formatFixed(n, 2);
+    }
+  });
   const common = {
     ...values,
     executor_name: (currentFieldValues['executor'] || '').trim(),

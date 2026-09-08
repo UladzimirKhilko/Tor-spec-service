@@ -351,23 +351,24 @@ function parseBeltoText(rawText) {
   if (result.heat_transfer_coef_actual !== undefined && result.heat_transfer_coef_required !== undefined) {
     result.heat_transfer_coef_combined = `${formatNumber(result.heat_transfer_coef_actual, 0)}/${formatNumber(result.heat_transfer_coef_required, 0)}`;
   }
-  // Запас по поверхности — с процентом и запятой как десятичным разделителем (рус. формат)
+  // Запас по поверхности — 2 знака после точки (десятичной), без знака "%"
   if (result.surface_margin !== undefined) {
     let sm = result.surface_margin;
     // OCR иногда "съедает" десятичный разделитель (например точку/запятую
     // в "5.26" — она мелкая и сливается с фоном таблицы), и вместо 5.26
     // распознаётся целое "526". Запас по поверхности почти всегда однозначное
-    // число с двумя знаками после запятой — если пришло трёхзначное целое,
-    // это почти наверняка тот случай, восстанавливаем разделитель.
+    // число с двумя знаками после разделителя — если пришло трёхзначное
+    // целое, это почти наверняка тот случай, восстанавливаем разделитель.
     sm = recoverLostDecimal(sm);
     result.surface_margin = sm;
-    const s = formatNumber(sm, 2);
     // ВАЖНО: БЕЗ знака "%" в самом значении — колонка "Ед.изм" в шаблоне уже
     // печатает "%" отдельно, добавлять его в значение тоже — задваивать знак
     // (пользователь заметил на реальном документе: "43,02%" в ячейке рядом
-    // с "%" в столбце единиц). Формат — с запятой как десятичным
-    // разделителем (рус.), без знака процента.
-    if (s) result.surface_margin_pct = s.replace('.', ',');
+    // с "%" в столбце единиц). Формат — РОВНО 2 знака после ТОЧКИ (десятичная
+    // запятая нигде в документе больше не используется — единый вид
+    // разделителя по всей форме, по просьбе пользователя), без знака %.
+    const s = formatFixed(sm, 2);
+    if (s) result.surface_margin_pct = s;
   }
 
   return { values: result, debugMatches };
@@ -403,10 +404,11 @@ function deriveMonoblockValues(v) {
     else if (has(ka)) v[`heat_transfer_coef_combined_${s}`] = f0(ka);
     const sm = v[`surface_margin_${s}`];
     if (has(sm)) {
-      const t = formatNumber(recoverLostDecimal(num(sm)), 2);
-      // Без "%" в значении — колонка "Ед.изм" уже печатает "%" отдельно
-      // (см. комментарий у обычного surface_margin_pct выше).
-      if (t) v[`surface_margin_pct_${s}`] = t.replace('.', ',');
+      // РОВНО 2 знака после ТОЧКИ, без знака "%" (колонка "Ед.изм" уже
+      // печатает "%" отдельно — см. комментарий у обычного surface_margin_pct
+      // выше; единый разделитель-точка — по просьбе пользователя).
+      const t = formatFixed(recoverLostDecimal(num(sm)), 2);
+      if (t) v[`surface_margin_pct_${s}`] = t;
     }
   });
 
@@ -415,15 +417,18 @@ function deriveMonoblockValues(v) {
   // и того же пластинчатого пакета, в спецификации BelTO указана в блоке
   // "Характеристики" отдельно на каждую ступень, но обе строки — одно и то
   // же число (проверено на реальном примере: 44.80 / 44.80). Берём значение
-  // любой ступени, где оно есть.
+  // любой ступени, где оно есть. 2 знака после точки, всегда (даже с нулём
+  // на конце) — по просьбе пользователя.
   if (has(v.heat_surface_s1) || has(v.heat_surface_s2)) {
-    v.heat_surface = formatNumber(has(v.heat_surface_s1) ? num(v.heat_surface_s1) : num(v.heat_surface_s2), 3);
+    v.heat_surface = formatFixed(has(v.heat_surface_s1) ? num(v.heat_surface_s1) : num(v.heat_surface_s2), 2);
   }
 
+  // Тепловая нагрузка ГВС — 3 знака после точки, всегда (даже с нулями на
+  // конце) — по просьбе пользователя.
   if (has(v.heat_power_s1) && has(v.heat_power_s2)) {
-    v.heat_load_gvs = formatNumber(num(v.heat_power_s1) + num(v.heat_power_s2), 3);
+    v.heat_load_gvs = formatFixed(num(v.heat_power_s1) + num(v.heat_power_s2), 3);
   } else if (has(v.heat_power_s1) || has(v.heat_power_s2)) {
-    v.heat_load_gvs = formatNumber(has(v.heat_power_s1) ? num(v.heat_power_s1) : num(v.heat_power_s2), 3);
+    v.heat_load_gvs = formatFixed(has(v.heat_power_s1) ? num(v.heat_power_s1) : num(v.heat_power_s2), 3);
   }
 
   // Температурный график сетевой воды у моноблока вводится инженером вручную

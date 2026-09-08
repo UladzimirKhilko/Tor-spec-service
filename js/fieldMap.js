@@ -35,8 +35,8 @@ const TEMPLATES = [
       { key: 'contact_person',   label: 'Фамилия И.О. (контактное лицо)',   group: 'manual', shapeIds: [11], unit: null, notes: '' },
       { key: 'contact_info',     label: 'Телефон, факс, E-mail',            group: 'manual', shapeIds: [13], unit: null, notes: '' },
       { key: 'calc_number',      label: 'Номер расчёта',                    group: 'manual', shapeIds: [1797], unit: null, notes: 'Введите только номер, например 19234 — месяц и год подставятся автоматически по сегодняшней дате: получится "19234/09-2026". После первого расчёта поле само подставляет следующий номер (из журнала) — можно менять вручную' },
-      { key: 'price_unit',       label: 'Цена без НДС за единицу, руб',     group: 'manual', shapeIds: [31], unit: 'руб', notes: '' },
-      { key: 'price_total',      label: 'ИТОГО цена без НДС, руб',          group: 'manual', shapeIds: [36, 1794], unit: 'руб', notes: '' },
+      { key: 'price_unit',       label: 'Цена без НДС за единицу, руб',     group: 'manual', shapeIds: [31], unit: 'руб', notes: 'Округляется до 2 знаков после точки при вводе' },
+      { key: 'price_total',      label: 'ИТОГО цена без НДС, руб',          group: 'manual', shapeIds: [36, 1794], unit: 'руб', notes: 'Округляется до 2 знаков после точки при вводе' },
       { key: 'executor',         label: 'Расчёт выполнил (ФИО)',            group: 'manual', shapeIds: [56], unit: null, notes: 'Дата проставляется автоматически текущим числом (дд/мм/гггг) — вводить не нужно' },
       { key: 'journal_note',     label: 'Примечание (для журнала расчётов)', group: 'manual', shapeIds: [], unit: null, notes: 'Необязательно — короткая заметка для столбца «Примечание» в журнале расчётов (Google-таблица), в сам документ не попадает' },
 
@@ -63,9 +63,9 @@ const TEMPLATES = [
 
       { key: 'heat_load',
         label: 'Тепловая нагрузка',
-        group: 'auto', shapeIds: [136], unit: null,
+        group: 'auto', shapeIds: [136], unit: null, decimals: 3,
         sourceKeys: ['heat_power'], sourceUnit: null, convert: null,
-        notes: 'Единица измерения переносится из спецификации как есть (Гкал/ч, кВт и т.п. — см. поле "Ед.изм" в документе), число не пересчитывается' },
+        notes: 'Единица измерения переносится из спецификации как есть (Гкал/ч, кВт и т.п. — см. поле "Ед.изм" в документе), число не пересчитывается. Формат: 3 знака после точки (даже нулевые)' },
 
       { key: 'temp_graph',
         label: 'Температурный график сетевой воды, °C',
@@ -87,15 +87,15 @@ const TEMPLATES = [
 
       { key: 'flow_hot',
         label: 'Расход, греющий контур',
-        group: 'auto', shapeIds: [94], unit: null,
+        group: 'auto', shapeIds: [94], unit: null, decimals: 2,
         sourceKeys: ['flow_hot'], sourceUnit: null, convert: null,
-        notes: 'Единица измерения переносится из спецификации как есть (см. поле "Ед.изм" в документе)' },
+        notes: 'Единица измерения переносится из спецификации как есть (см. поле "Ед.изм" в документе). Формат: 2 знака после точки (даже нулевые)' },
 
       { key: 'flow_cold',
         label: 'Расход, нагреваемый контур',
-        group: 'auto', shapeIds: [747, 350], unit: null,
+        group: 'auto', shapeIds: [747, 350], unit: null, decimals: 2,
         sourceKeys: ['flow_cold'], sourceUnit: null, convert: null,
-        notes: 'В шаблоне обнаружены две наложенные ячейки (747 и 350) — значение пишется в обе на всякий случай. Единица измерения переносится из спецификации как есть' },
+        notes: 'В шаблоне обнаружены две наложенные ячейки (747 и 350) — значение пишется в обе на всякий случай. Единица измерения переносится из спецификации как есть. Формат: 2 знака после точки (даже нулевые)' },
 
       // ВАЖНО: convert теперь ФУНКЦИЯ, а не имя готового конвертера — единица
       // измерения потерь давления в разных спецификациях может отличаться
@@ -109,17 +109,17 @@ const TEMPLATES = [
       // и её собственная подпись переносятся как есть.
       { key: 'dp_hot',
         label: 'Потери давления, греющий контур, кг/см2',
-        group: 'auto', shapeIds: [95], unit: 'кг/см2',
+        group: 'auto', shapeIds: [95], unit: 'кг/см2', decimals: 3,
         sourceKeys: ['dp_hot'], sourceUnit: 'кПа',
         convert: (raw, sourceValues) => convertDpToKgfCm2(raw, sourceValues && sourceValues.dp_unit),
-        notes: 'Конвертируется в кгс/см2, если единица в спецификации опознана (кПа/бар) — иначе переносится как в спецификации' },
+        notes: 'Конвертируется в кгс/см2, если единица в спецификации опознана (кПа/бар) — иначе переносится как в спецификации. Формат: 3 знака после точки (даже нулевые)' },
 
       { key: 'dp_cold',
         label: 'Потери давления, нагреваемый контур, кг/см2',
-        group: 'auto', shapeIds: [15], unit: 'кг/см2',
+        group: 'auto', shapeIds: [15], unit: 'кг/см2', decimals: 3,
         sourceKeys: ['dp_cold'], sourceUnit: 'кПа',
         convert: (raw, sourceValues) => convertDpToKgfCm2(raw, sourceValues && sourceValues.dp_unit),
-        notes: 'Конвертируется в кгс/см2, если единица в спецификации опознана (кПа/бар) — иначе переносится как в спецификации' },
+        notes: 'Конвертируется в кгс/см2, если единица в спецификации опознана (кПа/бар) — иначе переносится как в спецификации. Формат: 3 знака после точки (даже нулевые)' },
 
       { key: 'plates_count',
         label: 'Количество пластин, шт',
@@ -143,12 +143,13 @@ const TEMPLATES = [
         label: 'Запас по поверхности, %',
         group: 'auto', shapeIds: [123], unit: '%',
         sourceKeys: ['surface_margin_pct', 'surface_margin'], sourceUnit: '%', convert: null,
-        notes: 'Формат: с запятой, например 5,26 (без знака % — он уже напечатан в колонке "Ед.изм")' },
+        notes: 'Формат: 2 знака после точки, например 5.26 (без знака % — он уже напечатан в колонке "Ед.изм")' },
 
       { key: 'heat_surface',
         label: 'Поверхность теплообмена, м2',
-        group: 'auto', shapeIds: [126], unit: 'м2',
-        sourceKeys: ['heat_surface'], sourceUnit: 'м2', convert: null, notes: '' },
+        group: 'auto', shapeIds: [126], unit: 'м2', decimals: 2,
+        sourceKeys: ['heat_surface'], sourceUnit: 'м2', convert: null,
+        notes: 'Формат: 2 знака после точки (даже нулевые)' },
 
       { key: 'dn',
         label: 'Условный диаметр DN, мм (все патрубки)',
@@ -187,7 +188,7 @@ const TEMPLATES = [
       { key: 'certificates_note',
         label: 'Блок "Примечание" (сертификаты, ТР ТС, материалы)',
         group: 'manual', shapeIds: [], unit: null, multiline: true,
-        notes: 'Заполнено текстом из образца — проверьте и поправьте при необходимости (например номер/дату сертификата)' },
+        notes: 'Текст подставляется автоматически из загруженного PDF-бланка — проверьте и поправьте при необходимости (например номер/дату сертификата)' },
     ],
   },
 
@@ -210,8 +211,8 @@ const TEMPLATES = [
       { key: 'contact_person',   label: 'Фамилия И.О. (контактное лицо)',   group: 'manual', shapeIds: [], unit: null, notes: '' },
       { key: 'contact_info',     label: 'Телефон, факс, E-mail',            group: 'manual', shapeIds: [], unit: null, notes: '' },
       { key: 'calc_number',      label: 'Номер расчёта',                    group: 'manual', shapeIds: [], unit: null, notes: 'Введите только номер — месяц и год подставятся автоматически по сегодняшней дате. После первого расчёта поле само подставляет следующий номер (из журнала) — можно менять вручную' },
-      { key: 'price_unit',       label: 'Цена без НДС за единицу, руб',     group: 'manual', shapeIds: [], unit: 'руб', notes: '' },
-      { key: 'price_total',      label: 'ИТОГО цена без НДС, руб',          group: 'manual', shapeIds: [], unit: 'руб', notes: '' },
+      { key: 'price_unit',       label: 'Цена без НДС за единицу, руб',     group: 'manual', shapeIds: [], unit: 'руб', notes: 'Округляется до 2 знаков после точки при вводе' },
+      { key: 'price_total',      label: 'ИТОГО цена без НДС, руб',          group: 'manual', shapeIds: [], unit: 'руб', notes: 'Округляется до 2 знаков после точки при вводе' },
       { key: 'executor',         label: 'Расчёт выполнил (ФИО)',            group: 'manual', shapeIds: [], unit: null, notes: 'Дата проставляется автоматически текущим числом' },
       { key: 'journal_note',     label: 'Примечание (для журнала расчётов)', group: 'manual', shapeIds: [], unit: null, notes: 'Необязательно — короткая заметка для столбца «Примечание» в журнале расчётов (Google-таблица), в сам документ не попадает' },
 
@@ -244,15 +245,15 @@ const TEMPLATES = [
       { key: 'temp_s1_hot',  label: 'Температура вход-выход, I ступень, греющий, °C',      group: 'auto', shapeIds: [], unit: '°C', sourceKeys: ['temp_s1_hot'], sourceUnit: '°C', convert: null, notes: '' },
       { key: 'temp_s1_cold', label: 'Температура вход-выход, I ступень, нагреваемый, °C',  group: 'auto', shapeIds: [], unit: '°C', sourceKeys: ['temp_s1_cold'], sourceUnit: '°C', convert: null, notes: '' },
 
-      { key: 'flow_s2_hot',  label: 'Расход, II ступень, греющий контур',     group: 'auto', shapeIds: [], unit: null, sourceKeys: ['flow_s2_hot'], sourceUnit: null, convert: null, notes: 'Единица — из спецификации' },
-      { key: 'flow_s2_cold', label: 'Расход, II ступень, нагреваемый контур', group: 'auto', shapeIds: [], unit: null, sourceKeys: ['flow_s2_cold'], sourceUnit: null, convert: null, notes: 'Единица — из спецификации' },
-      { key: 'flow_s1_hot',  label: 'Расход, I ступень, греющий контур',      group: 'auto', shapeIds: [], unit: null, sourceKeys: ['flow_s1_hot'], sourceUnit: null, convert: null, notes: 'Единица — из спецификации' },
-      { key: 'flow_s1_cold', label: 'Расход, I ступень, нагреваемый контур',  group: 'auto', shapeIds: [], unit: null, sourceKeys: ['flow_s1_cold'], sourceUnit: null, convert: null, notes: 'Единица — из спецификации' },
+      { key: 'flow_s2_hot',  label: 'Расход, II ступень, греющий контур',     group: 'auto', shapeIds: [], unit: null, sourceKeys: ['flow_s2_hot'], sourceUnit: null, convert: null, decimals: 2, notes: 'Единица — из спецификации. Формат: 2 знака после точки (даже нулевые)' },
+      { key: 'flow_s2_cold', label: 'Расход, II ступень, нагреваемый контур', group: 'auto', shapeIds: [], unit: null, sourceKeys: ['flow_s2_cold'], sourceUnit: null, convert: null, decimals: 2, notes: 'Единица — из спецификации. Формат: 2 знака после точки (даже нулевые)' },
+      { key: 'flow_s1_hot',  label: 'Расход, I ступень, греющий контур',      group: 'auto', shapeIds: [], unit: null, sourceKeys: ['flow_s1_hot'], sourceUnit: null, convert: null, decimals: 2, notes: 'Единица — из спецификации. Формат: 2 знака после точки (даже нулевые)' },
+      { key: 'flow_s1_cold', label: 'Расход, I ступень, нагреваемый контур',  group: 'auto', shapeIds: [], unit: null, sourceKeys: ['flow_s1_cold'], sourceUnit: null, convert: null, decimals: 2, notes: 'Единица — из спецификации. Формат: 2 знака после точки (даже нулевые)' },
 
-      { key: 'dp_s2_hot',  label: 'Потери давления, II ступень, греющий контур',     group: 'auto', shapeIds: [], unit: 'кг/см2', sourceKeys: ['dp_s2_hot'], sourceUnit: 'кПа', convert: (raw, sv) => convertDpToKgfCm2(raw, sv && sv.dp_unit), notes: 'Конвертируется в кгс/см2, если единица опознана' },
-      { key: 'dp_s2_cold', label: 'Потери давления, II ступень, нагреваемый контур', group: 'auto', shapeIds: [], unit: 'кг/см2', sourceKeys: ['dp_s2_cold'], sourceUnit: 'кПа', convert: (raw, sv) => convertDpToKgfCm2(raw, sv && sv.dp_unit), notes: 'Конвертируется в кгс/см2, если единица опознана' },
-      { key: 'dp_s1_hot',  label: 'Потери давления, I ступень, греющий контур',      group: 'auto', shapeIds: [], unit: 'кг/см2', sourceKeys: ['dp_s1_hot'], sourceUnit: 'кПа', convert: (raw, sv) => convertDpToKgfCm2(raw, sv && sv.dp_unit), notes: 'Конвертируется в кгс/см2, если единица опознана' },
-      { key: 'dp_s1_cold', label: 'Потери давления, I ступень, нагреваемый контур',  group: 'auto', shapeIds: [], unit: 'кг/см2', sourceKeys: ['dp_s1_cold'], sourceUnit: 'кПа', convert: (raw, sv) => convertDpToKgfCm2(raw, sv && sv.dp_unit), notes: 'Конвертируется в кгс/см2, если единица опознана' },
+      { key: 'dp_s2_hot',  label: 'Потери давления, II ступень, греющий контур',     group: 'auto', shapeIds: [], unit: 'кг/см2', sourceKeys: ['dp_s2_hot'], sourceUnit: 'кПа', convert: (raw, sv) => convertDpToKgfCm2(raw, sv && sv.dp_unit), decimals: 3, notes: 'Конвертируется в кгс/см2, если единица опознана. Формат: 3 знака после точки (даже нулевые)' },
+      { key: 'dp_s2_cold', label: 'Потери давления, II ступень, нагреваемый контур', group: 'auto', shapeIds: [], unit: 'кг/см2', sourceKeys: ['dp_s2_cold'], sourceUnit: 'кПа', convert: (raw, sv) => convertDpToKgfCm2(raw, sv && sv.dp_unit), decimals: 3, notes: 'Конвертируется в кгс/см2, если единица опознана. Формат: 3 знака после точки (даже нулевые)' },
+      { key: 'dp_s1_hot',  label: 'Потери давления, I ступень, греющий контур',      group: 'auto', shapeIds: [], unit: 'кг/см2', sourceKeys: ['dp_s1_hot'], sourceUnit: 'кПа', convert: (raw, sv) => convertDpToKgfCm2(raw, sv && sv.dp_unit), decimals: 3, notes: 'Конвертируется в кгс/см2, если единица опознана. Формат: 3 знака после точки (даже нулевые)' },
+      { key: 'dp_s1_cold', label: 'Потери давления, I ступень, нагреваемый контур',  group: 'auto', shapeIds: [], unit: 'кг/см2', sourceKeys: ['dp_s1_cold'], sourceUnit: 'кПа', convert: (raw, sv) => convertDpToKgfCm2(raw, sv && sv.dp_unit), decimals: 3, notes: 'Конвертируется в кгс/см2, если единица опознана. Формат: 3 знака после точки (даже нулевые)' },
 
       { key: 'plates_count', label: 'Количество пластин, шт', group: 'auto', shapeIds: [], unit: 'шт', sourceKeys: ['plates_count'], sourceUnit: 'шт', convert: null, notes: 'Общее число пластин на весь моноблок' },
 
@@ -283,7 +284,7 @@ const TEMPLATES = [
       { key: 'certificates_note',
         label: 'Блок "Примечание" (сертификаты, ТР ТС, материалы)',
         group: 'manual', shapeIds: [], unit: null, multiline: true,
-        notes: 'Заполнено текстом из образца — проверьте и поправьте при необходимости' },
+        notes: 'Текст подставляется автоматически из загруженного PDF-бланка — проверьте и поправьте при необходимости (например номер/дату сертификата)' },
     ],
   },
 ];
