@@ -1,9 +1,12 @@
 /**
- * Code.gs — принимает POST-запрос от сервиса tor-spec-service и добавляет
+ * Code.gs — принимает POST-запрос от сервиса tor-spec-service и (1) добавляет
  * строку в лист "Журнал" привязанной Google Таблицы, в формате бумажного
  * журнала БСИ: № | Условное обозначение теплообменника | Дата | Объект |
  * Заказчик | Примечание, со строками-разделителями по году и месяцу
- * ("2020", "Январь" и т.п. — по образцу, который дал пользователь).
+ * ("2020", "Январь" и т.п. — по образцу, который дал пользователь), и (2),
+ * если в запросе передан сам файл — сохраняет .docx на Google Диск, в папку
+ * "Документы" рядом с этой таблицей, сгруппированную по году и месяцу (та
+ * же логика, что и в журнале) — см. saveDocumentToDrive ниже.
  *
  * УСТАНОВКА (см. подробно README.md, раздел "Журнал расчётов"):
  * 1. Создайте Google Таблицу (sheets.google.com) на нужном аккаунте.
@@ -14,12 +17,18 @@
  *      - У кого есть доступ: "Все"
  * 5. Скопируйте URL веб-приложения и вставьте его в js/config.js
  *    как APPS_SCRIPT_URL.
+ *
+ * Если журнал уже был настроен раньше и меняется только этот файл — не
+ * нужен новый деплой: Деплой -> Управление деплоями -> карандаш (изменить)
+ * у существующего веб-приложения -> Версия: "Новая версия" -> Деплой.
+ * URL веб-приложения при этом не меняется, js/config.js трогать не нужно.
  */
 
 const SHEET_NAME = 'Журнал';
 const HEADERS = ['№', 'Условное обозначение теплообменника', 'Дата', 'Объект', 'Заказчик', 'Примечание'];
 const NUM_COLS = HEADERS.length;
 const MONTHS_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const DOCUMENTS_ROOT_FOLDER_NAME = 'Документы';
 
 // GET .../exec?action=nextNumber — возвращает следующий номер расчёта
 // (последний использованный номер + 1), чтобы сервис мог подставить его
@@ -70,12 +79,63 @@ function doPost(e) {
       data.customer || '',
       data.note || '',
     ]);
-    return ContentService.createTextOutput(JSON.stringify({ ok: true }))
+    // Сам файл .docx (необязательно) — сервис присылает его в том же
+    // запросе, что и строку журнала (одна кнопка "Добавить в журнал" на
+    // стороне сотрудника). Если fileBase64 не передан — ничего не сохраняем,
+    // старое поведение (только строка в таблице) не меняется.
+    let fileUrl = null;
+    if (data.fileBase64) {
+      fileUrl = saveDocumentToDrive(data.date, data.fileName, data.fileBase64);
+    }
+    return ContentService.createTextOutput(JSON.stringify({ ok: true, fileUrl: fileUrl }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
     return ContentService.createTextOutput(JSON.stringify({ ok: false, error: String(err) }))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// Папка "Документы" — создаётся (один раз, дальше переиспользуется) РЯДОМ
+// с этой же таблицей: в той же папке Google Диска, где лежит сама таблица
+// журнала — по просьбе пользователя, чтобы не искать файлы отдельно.
+// Если у таблицы почему-то нет родительской папки (лежит в самом корне
+// "Мой диск") — папка создаётся в корне Диска.
+function getDocumentsRootFolder() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const file = DriveApp.getFileById(ss.getId());
+  const parents = file.getParents();
+  const parent = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+  return getOrCreateChildFolder(parent, DOCUMENTS_ROOT_FOLDER_NAME);
+}
+
+function getOrCreateChildFolder(parent, name) {
+  const existing = parent.getFoldersByName(name);
+  if (existing.hasNext()) return existing.next();
+  return parent.createFolder(name);
+}
+
+// Сохраняет присланный .docx в "Документы/<год>/<ММ-Месяц>/<имя файла>" —
+// та же группировка по году/месяцу, что и в самом журнале (ensureSectionHeaders
+// выше), только оформленная как папки, а не строки-разделители. Если дата
+// не распознана (не должно случаться — сервис всегда шлёт сегодняшнюю дату,
+// см. formatTodayDateDMYDots в app.js) — сохраняет прямо в корень
+// "Документы", без подпапок, чтобы файл в любом случае не потерялся.
+function saveDocumentToDrive(dateStr, fileName, base64) {
+  const root = getDocumentsRootFolder();
+  let folder = root;
+  const parts = String(dateStr || '').split('.');
+  if (parts.length === 3) {
+    const month = parseInt(parts[1], 10);
+    const year = parts[2];
+    if (month >= 1 && month <= 12 && /^\d{4}$/.test(year)) {
+      const yearFolder = getOrCreateChildFolder(root, year);
+      folder = getOrCreateChildFolder(yearFolder, `${String(month).padStart(2, '0')}-${MONTHS_RU[month - 1]}`);
+    }
+  }
+  const bytes = Utilities.base64Decode(base64);
+  const blob = Utilities.newBlob(bytes, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', fileName || 'расчёт.docx');
+  const file = folder.createFile(blob);
+  return file.getUrl();
 }
 
 function getOrCreateSheet() {

@@ -644,8 +644,12 @@ async function handleGenerateCustomDocx() {
     setStatus('genStatus', `Скачан файл ${filename}`, 'ok');
     // Запись в журнал — не автоматически, а по отдельной кнопке (см.
     // handleAddToJournal): сотрудник сам решает, заносить ли конкретный
-    // расчёт (черновики/тесты заносить не нужно).
+    // расчёт (черновики/тесты заносить не нужно). Байты документа
+    // запоминаем здесь же — та же кнопка "Добавить в журнал" отправит их
+    // в Apps Script, чтобы сохранить сам файл на Google Диске (не только
+    // строку в таблице), см. handleAddToJournal.
     lastGeneratedLogFormat = 'docx-custom';
+    lastGeneratedDocxBytes = bytes;
     const btn = el('btnAddToJournal');
     if (btn) { btn.style.display = ''; btn.disabled = false; }
     setStatus('journalStatus', '');
@@ -659,6 +663,47 @@ async function handleGenerateCustomDocx() {
 // если сотрудник нажмёт "Добавить в журнал" (кнопка появляется только
 // после генерации, см. handleGenerateCustomDocx).
 let lastGeneratedLogFormat = null;
+// Байты последнего сгенерированного .docx — нужны, чтобы та же кнопка
+// "Добавить в журнал" могла отправить сам файл в Apps Script на
+// сохранение в Google Диск (см. ниже). Если страницу перезагрузили после
+// скачивания (байтов уже нет) — просто не отправляем файл, строка в
+// журнал всё равно уходит как раньше.
+let lastGeneratedDocxBytes = null;
+
+// Преобразует байты файла в base64 через Blob/FileReader — так надёжнее
+// для файлов заметного размера (сотни КБ, из-за встроенной картинки), чем
+// btoa(String.fromCharCode(...bytes)): у последнего в некоторых браузерах
+// есть предел на число аргументов при "растягивании" большого массива.
+function bytesToBase64(bytes) {
+  return new Promise((resolve, reject) => {
+    const blob = new Blob([bytes]);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const comma = dataUrl.indexOf(',');
+      resolve(comma >= 0 ? dataUrl.slice(comma + 1) : '');
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Имя файла НА ГУГЛ ДИСКЕ — по просьбе пользователя другое, чем при
+// скачивании (buildOutputFilename): номер расчёта (полный, с месяцем/годом,
+// как в самом документе) + короткое название теплообменника (марка и
+// исполнение, БЕЗ раскладки пластин в скобках — она не нужна для навигации
+// по папке) + заказчик, если он указан. "/" в номере расчёта заменяем на
+// "-", т.к. большинство файловых систем не разрешают "/" в имени файла.
+function buildDriveFilename() {
+  const numberPart = formatCalcNumber(currentFieldValues['calc_number']).replace(/\//g, '-');
+  const fullModel = currentFieldValues['model'] || '';
+  const shortModel = fullModel.replace(/\s*\(.*$/, '').trim(); // отрезаем " (24LL)+(33LL)" и т.п.
+  const customer = (currentFieldValues['customer'] || '').trim();
+  const parts = [numberPart, shortModel, customer].filter(Boolean);
+  const raw = parts.join('_') || 'расчёт';
+  const safe = raw.replace(/[\\/:*?"<>|]+/g, '_').trim();
+  return `${safe}.docx`;
+}
 
 async function handleAddToJournal() {
   if (!lastGeneratedLogFormat) return;
@@ -668,10 +713,26 @@ async function handleAddToJournal() {
   }
   const btn = el('btnAddToJournal');
   if (btn) btn.disabled = true;
-  setStatus('journalStatus', 'Добавляю строку в журнал...');
-  const result = await logToSheet(buildLogEntry(lastGeneratedLogFormat));
+  const entry = buildLogEntry(lastGeneratedLogFormat);
+  // Файл на Google Диск отправляется в том же запросе, что и строка
+  // журнала (по просьбе пользователя — одна кнопка вместо двух).
+  let willSaveFile = false;
+  if (lastGeneratedDocxBytes) {
+    try {
+      entry.fileBase64 = await bytesToBase64(lastGeneratedDocxBytes);
+      entry.fileName = buildDriveFilename();
+      willSaveFile = true;
+    } catch (e) {
+      console.warn('Не удалось подготовить файл для сохранения на Google Диск', e);
+    }
+  }
+  setStatus('journalStatus', willSaveFile ? 'Добавляю в журнал и сохраняю файл на Google Диск...' : 'Добавляю строку в журнал...');
+  const result = await logToSheet(entry);
   if (result && result.ok) {
-    setStatus('journalStatus', 'Добавлено в журнал.', 'ok');
+    // "no-cors" запрос (см. sheetsLog.js) — подтвердить именно успех
+    // сохранения ФАЙЛА браузер не может (как и раньше не мог подтвердить
+    // саму запись в таблицу), формулировка ниже — про то, что запрос ушёл.
+    setStatus('journalStatus', willSaveFile ? 'Добавлено в журнал, файл отправлен на Google Диск.' : 'Добавлено в журнал.', 'ok');
   } else if (result && result.skipped) {
     setStatus('journalStatus', 'Журнал не настроен — укажите APPS_SCRIPT_URL в js/config.js.', 'err');
     if (btn) btn.disabled = false;
