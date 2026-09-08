@@ -329,7 +329,17 @@ async function handleFile(file) {
 
     applyParsedValues(values);
     resolveDynamicUnits(values);
+    // Новая спецификация — это НОВЫЙ расчёт, поэтому номер предыдущего
+    // расчёта (если он остался в поле с прошлой загрузки в этой же сессии)
+    // сбрасываем, чтобы suggestNextCalcNumber ниже предложил свежий номер
+    // из журнала, а не молча оставил старый (иначе подсказка сработает
+    // только один раз за сессию — при самой первой загрузке).
+    currentFieldValues['calc_number'] = '';
     renderForm();
+    // Автономер расчёта — не блокирует отображение формы (запрос в фоне,
+    // см. suggestNextCalcNumber): если из журнала придёт следующий номер,
+    // поле "Номер расчёта" перерисуется с уже подставленным значением.
+    suggestNextCalcNumber();
 
     const methodLabel = method === 'html-table'
       ? 'разбор HTML-таблицы, точно, без OCR'
@@ -352,6 +362,12 @@ async function handleFile(file) {
 
     el('formSection').style.display = '';
     el('actionsSection').style.display = '';
+    // Новая спецификация загружена — предыдущий результат генерации больше
+    // не актуален, скрываем кнопку "Добавить в журнал" до следующей генерации.
+    lastGeneratedLogFormat = null;
+    const journalBtn = el('btnAddToJournal');
+    if (journalBtn) journalBtn.style.display = 'none';
+    setStatus('journalStatus', '');
   } catch (err) {
     console.error(err);
     setStatus('parseStatus', 'Ошибка распознавания: ' + err.message, 'err');
@@ -577,10 +593,42 @@ async function handleGenerateCustomDocx() {
     const filename = buildOutputFilename('docx');
     downloadDocxBytes(bytes, filename);
     setStatus('genStatus', `Скачан файл ${filename}`, 'ok');
-    await logToSheet(buildLogEntry('docx-custom'));
+    // Запись в журнал — не автоматически, а по отдельной кнопке (см.
+    // handleAddToJournal): сотрудник сам решает, заносить ли конкретный
+    // расчёт (черновики/тесты заносить не нужно).
+    lastGeneratedLogFormat = 'docx-custom';
+    const btn = el('btnAddToJournal');
+    if (btn) { btn.style.display = ''; btn.disabled = false; }
+    setStatus('journalStatus', '');
   } catch (err) {
     console.error(err);
     setStatus('genStatus', 'Ошибка формирования Word-документа: ' + err.message, 'err');
+  }
+}
+
+// Заполняется после успешной генерации документа — что именно логировать,
+// если сотрудник нажмёт "Добавить в журнал" (кнопка появляется только
+// после генерации, см. handleGenerateCustomDocx).
+let lastGeneratedLogFormat = null;
+
+async function handleAddToJournal() {
+  if (!lastGeneratedLogFormat) return;
+  if (!APPS_SCRIPT_URL) {
+    setStatus('journalStatus', 'Журнал не настроен — укажите APPS_SCRIPT_URL в js/config.js (см. README.md, раздел "Журнал расчётов").', 'err');
+    return;
+  }
+  const btn = el('btnAddToJournal');
+  if (btn) btn.disabled = true;
+  setStatus('journalStatus', 'Добавляю строку в журнал...');
+  const result = await logToSheet(buildLogEntry(lastGeneratedLogFormat));
+  if (result && result.ok) {
+    setStatus('journalStatus', 'Добавлено в журнал.', 'ok');
+  } else if (result && result.skipped) {
+    setStatus('journalStatus', 'Журнал не настроен — укажите APPS_SCRIPT_URL в js/config.js.', 'err');
+    if (btn) btn.disabled = false;
+  } else {
+    setStatus('journalStatus', 'Не удалось записать в журнал (проверьте интернет и адрес APPS_SCRIPT_URL).', 'err');
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -609,6 +657,12 @@ function formatTodayDateDMY() {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+// То же самое, но с точками (дд.мм.гггг) — формат даты в журнале расчётов
+// (Google-таблица), как в образце бумажного журнала БСИ.
+function formatTodayDateDMYDots() {
+  return formatTodayDateDMY().replace(/\//g, '.');
+}
+
 // Для .vsdx и "своего PDF-шаблона" ФИО и дата пишутся в одну и ту же ячейку
 // одной строкой (как раньше, когда дату вводили руками) — просто дата теперь
 // всегда сегодняшняя, а не то, что ввёл пользователь.
@@ -625,16 +679,45 @@ function buildOutputFilename(ext) {
   return `${model}_${date}.${ext}`;
 }
 
+// Формат журнала — по образцу бумажного журнала БСИ (столбцы "№",
+// "Условное обозначение теплообменника", "Дата", "Объект", "Заказчик",
+// "Примечание"; строки группируются по году/месяцу — это делает сам
+// Apps Script на стороне таблицы, см. apps-script/Code.gs). "№" здесь —
+// номер расчёта + "/ММ" (месяц, БЕЗ года — год виден из заголовка секции),
+// в отличие от номера в самом документе (там "19234/09-2026").
+function formatCalcNumberForJournal(rawNumber) {
+  const num = (rawNumber || '').trim();
+  if (!num) return '';
+  const now = new Date();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  return `${num}/${mm}`;
+}
+
+// Инженер вводит первый номер расчёта вручную один раз; при каждом
+// следующем расчёте сервис сам подсказывает следующий (последний номер
+// в Журнале + 1) — подставляет его прямо в поле "Номер расчёта" (его
+// в любой момент можно поправить руками, это только подсказка). Не
+// перетирает значение, если поле уже чем-то заполнено (например, если
+// сотрудник уже начал вводить номер сам, пока шёл запрос к таблице).
+// Работает молча — если APPS_SCRIPT_URL не настроен или запрос не
+// удался, поле просто остаётся пустым, как раньше.
+async function suggestNextCalcNumber() {
+  if (currentFieldValues['calc_number']) return;
+  const result = await fetchNextCalcNumber();
+  if (result && result.ok && result.nextNumber != null && !currentFieldValues['calc_number']) {
+    currentFieldValues['calc_number'] = String(result.nextNumber);
+    renderForm();
+  }
+}
+
 function buildLogEntry(format) {
   return {
-    timestamp: new Date().toISOString(),
-    template: currentTemplate ? currentTemplate.id : '',
-    format,
+    number: formatCalcNumberForJournal(currentFieldValues['calc_number']),
     model: currentFieldValues['model'] || '',
-    customer: currentFieldValues['customer'] || '',
+    date: formatTodayDateDMYDots(),
     site: currentFieldValues['site'] || '',
-    calc_number: formatCalcNumber(currentFieldValues['calc_number']),
-    price_total: currentFieldValues['price_total'] || '',
+    customer: currentFieldValues['customer'] || '',
+    note: currentFieldValues['journal_note'] || '',
   };
 }
 
@@ -644,4 +727,5 @@ document.addEventListener('DOMContentLoaded', () => {
   initCustomTemplateUpload();
   initDropzone();
   el('btnCustomDocx').addEventListener('click', handleGenerateCustomDocx);
+  el('btnAddToJournal').addEventListener('click', handleAddToJournal);
 });
