@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>БСИ — короткие спецификации теплообменников</title>
-<link rel="stylesheet" href="css/style.css?v=43" />
+<link rel="stylesheet" href="css/style.css?v=44" />
 
 <!-- Библиотеки — собраны локально в vendor/, CDN не требуется для загрузки самого приложения.
      Исключение: Tesseract.js при OCR-распознавании сам подтягивает языковые данные
@@ -47,11 +47,24 @@
 
   <section class="card">
     <h2><span class="step-num">2</span>Спецификация-источник (BelTO)</h2>
+
+    <div class="segmented" id="specModeToggle" role="tablist" aria-label="Режим загрузки спецификации">
+      <button type="button" class="segmented-option active" data-mode="single" role="tab" aria-selected="true">Один файл</button>
+      <button type="button" class="segmented-option" data-mode="double" role="tab" aria-selected="false">Две спецификации (моноблок, HTML)</button>
+    </div>
+
     <div class="dropzone" id="dropzone">
       <div>Перетащите файл сюда или нажмите, чтобы выбрать</div>
-      <div class="hint">HTML-экспорт BelTO (точнее всего) / PDF (текстовый или скан) / JPG / PNG</div>
+      <div class="hint" id="dropzoneHint">HTML-экспорт BelTO (точнее всего) / PDF (текстовый или скан) / JPG / PNG</div>
       <input type="file" id="fileInput" accept=".html,.htm,.pdf,.jpg,.jpeg,.png" />
     </div>
+
+    <div class="dropzone" id="dropzone2" hidden>
+      <div>Вторая ступень — перетащите HTML-файл сюда или нажмите, чтобы выбрать</div>
+      <div class="hint">Только HTML-экспорт BelTO — отдельный расчёт II ступени как самостоятельного аппарата</div>
+      <input type="file" id="fileInput2" accept=".html,.htm" />
+    </div>
+
     <div class="status-line" id="parseStatus"></div>
     <details id="debugDetails" style="display:none; margin-top:10px;">
       <summary>Что удалось распознать (для проверки)</summary>
@@ -96,18 +109,18 @@
 <script src="vendor/pizzip.min.js"></script>
 <script src="vendor/docxtemplater.min.js"></script>
 <script src="vendor/docxtemplater-image-module-free.js"></script>
-<script src="js/config.js?v=43"></script>
-<script src="js/units.js?v=43"></script>
-<script src="js/fieldMap.js?v=43"></script>
-<script src="js/beltoParser.js?v=43"></script>
-<script src="js/extract.js?v=43"></script>
-<script src="js/pdfTemplate.js?v=43"></script>
-<script src="js/builtinPdfMapping.js?v=43"></script>
-<script src="js/docxTemplate.js?v=43"></script>
-<script src="js/diagramCrop.js?v=43"></script>
-<script src="js/modelExtract.js?v=43"></script>
-<script src="js/diagramZones.js?v=43"></script>
-<script src="js/sheetsLog.js?v=43"></script>
-<script src="js/app.js?v=43"></script>
+<script src="js/config.js?v=44"></script>
+<script src="js/units.js?v=44"></script>
+<script src="js/fieldMap.js?v=44"></script>
+<script src="js/beltoParser.js?v=44"></script>
+<script src="js/extract.js?v=44"></script>
+<script src="js/pdfTemplate.js?v=44"></script>
+<script src="js/builtinPdfMapping.js?v=44"></script>
+<script src="js/docxTemplate.js?v=44"></script>
+<script src="js/diagramCrop.js?v=44"></script>
+<script src="js/modelExtract.js?v=44"></script>
+<script src="js/diagramZones.js?v=44"></script>
+<script src="js/sheetsLog.js?v=44"></script>
+<script src="js/app.js?v=44"></script>
 </body>
 </html>

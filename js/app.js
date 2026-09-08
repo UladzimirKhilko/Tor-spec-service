@@ -270,6 +270,68 @@ function initDropzone() {
   input.addEventListener('change', () => {
     if (input.files[0]) handleFile(input.files[0]);
   });
+
+  // Вторая ступень (режим "Две спецификации", моноблок из двух отдельных
+  // HTML-файлов) — тот же дропзон-паттерн, второй независимый слот.
+  // Сам разбор/слияние двух спецификаций — отдельная задача (в разработке);
+  // здесь пока только приём файла в UI.
+  const dz2 = el('dropzone2');
+  const input2 = el('fileInput2');
+  dz2.addEventListener('click', () => input2.click());
+  ['dragenter', 'dragover'].forEach((ev) =>
+    dz2.addEventListener(ev, (e) => { e.preventDefault(); dz2.classList.add('drag'); })
+  );
+  ['dragleave', 'drop'].forEach((ev) =>
+    dz2.addEventListener(ev, (e) => { e.preventDefault(); dz2.classList.remove('drag'); })
+  );
+  dz2.addEventListener('drop', (e) => {
+    const file = e.dataTransfer.files[0];
+    if (file) handleSecondSpecFile(file);
+  });
+  input2.addEventListener('change', () => {
+    if (input2.files[0]) handleSecondSpecFile(input2.files[0]);
+  });
+}
+
+// Режим загрузки спецификации: 'single' (как раньше, один файл — обычный
+// аппарат или уже готовый комбинированный моноблок-отчёт) или 'double'
+// (моноблок из ДВУХ независимых HTML-спецификаций — каждая ступень
+// считалась в BelTO как отдельный аппарат; см. обсуждение с пользователем).
+// PDF/скан для моноблока остаётся только в режиме 'single', как и раньше.
+let specMode = 'single';
+let secondSpecFile = null;
+
+function initSpecModeToggle() {
+  const toggle = el('specModeToggle');
+  const dz2 = el('dropzone2');
+  toggle.querySelectorAll('.segmented-option').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      if (mode === specMode) return;
+      specMode = mode;
+      toggle.querySelectorAll('.segmented-option').forEach((b) => {
+        const active = b === btn;
+        b.classList.toggle('active', active);
+        b.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      dz2.hidden = specMode !== 'double';
+      el('dropzoneHint').textContent = specMode === 'double'
+        ? 'Первая ступень — HTML-экспорт BelTO (расчёт как самостоятельного аппарата)'
+        : 'HTML-экспорт BelTO (точнее всего) / PDF (текстовый или скан) / JPG / PNG';
+      if (specMode === 'single') {
+        secondSpecFile = null;
+        el('fileInput2').value = '';
+      }
+    });
+  });
+}
+
+// Пока просто запоминает второй файл — сам разбор/слияние двух
+// спецификаций (определение ступеней, пересчёт пластин и т.п.) добавляется
+// отдельным шагом.
+function handleSecondSpecFile(file) {
+  secondSpecFile = file;
+  setStatus('parseStatus', `Файл II ступени «${file.name}» выбран — загрузите первый файл, чтобы продолжить.`);
 }
 
 // Марка/исполнение теплообменника (например "ТОР-15М/13" + "1х") — берутся
@@ -828,6 +890,7 @@ function buildLogEntry(format) {
 document.addEventListener('DOMContentLoaded', () => {
   initCustomTemplateUpload();
   initDropzone();
+  initSpecModeToggle();
   el('btnCustomDocx').addEventListener('click', handleGenerateCustomDocx);
   el('btnAddToJournal').addEventListener('click', handleAddToJournal);
 });
