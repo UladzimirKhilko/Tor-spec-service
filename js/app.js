@@ -679,20 +679,6 @@ function buildOutputFilename(ext) {
   return `${model}_${date}.${ext}`;
 }
 
-// Формат журнала — по образцу бумажного журнала БСИ (столбцы "№",
-// "Условное обозначение теплообменника", "Дата", "Объект", "Заказчик",
-// "Примечание"; строки группируются по году/месяцу — это делает сам
-// Apps Script на стороне таблицы, см. apps-script/Code.gs). "№" здесь —
-// номер расчёта + "/ММ" (месяц, БЕЗ года — год виден из заголовка секции),
-// в отличие от номера в самом документе (там "19234/09-2026").
-function formatCalcNumberForJournal(rawNumber) {
-  const num = (rawNumber || '').trim();
-  if (!num) return '';
-  const now = new Date();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  return `${num}/${mm}`;
-}
-
 // Инженер вводит первый номер расчёта вручную один раз; при каждом
 // следующем расчёте сервис сам подсказывает следующий (последний номер
 // в Журнале + 1) — подставляет его прямо в поле "Номер расчёта" (его
@@ -710,9 +696,15 @@ async function suggestNextCalcNumber() {
   }
 }
 
+// Формат журнала — по образцу бумажного журнала БСИ (столбцы "№",
+// "Условное обозначение теплообменника", "Дата", "Объект", "Заказчик",
+// "Примечание"; строки группируются по году/месяцу — это делает сам
+// Apps Script на стороне таблицы, см. apps-script/Code.gs). "№" — тот же
+// ПОЛНЫЙ номер, что и в самом документе (formatCalcNumber, например
+// "19234/09-2026"), а не сокращённый — по просьбе пользователя.
 function buildLogEntry(format) {
   return {
-    number: formatCalcNumberForJournal(currentFieldValues['calc_number']),
+    number: formatCalcNumber(currentFieldValues['calc_number']),
     model: currentFieldValues['model'] || '',
     date: formatTodayDateDMYDots(),
     site: currentFieldValues['site'] || '',
