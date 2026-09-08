@@ -34,10 +34,11 @@ const TEMPLATES = [
       { key: 'site',             label: 'Место установки',                  group: 'manual', shapeIds: [27], unit: null, notes: '' },
       { key: 'contact_person',   label: 'Фамилия И.О. (контактное лицо)',   group: 'manual', shapeIds: [11], unit: null, notes: '' },
       { key: 'contact_info',     label: 'Телефон, факс, E-mail',            group: 'manual', shapeIds: [13], unit: null, notes: '' },
-      { key: 'calc_number',      label: 'Номер расчёта',                    group: 'manual', shapeIds: [1797], unit: null, notes: 'Введите только номер, например 19234 — месяц и год подставятся автоматически по сегодняшней дате: получится "19234/09-2026"' },
+      { key: 'calc_number',      label: 'Номер расчёта',                    group: 'manual', shapeIds: [1797], unit: null, notes: 'Введите только номер, например 19234 — месяц и год подставятся автоматически по сегодняшней дате: получится "19234/09-2026". После первого расчёта поле само подставляет следующий номер (из журнала) — можно менять вручную' },
       { key: 'price_unit',       label: 'Цена без НДС за единицу, руб',     group: 'manual', shapeIds: [31], unit: 'руб', notes: '' },
       { key: 'price_total',      label: 'ИТОГО цена без НДС, руб',          group: 'manual', shapeIds: [36, 1794], unit: 'руб', notes: '' },
       { key: 'executor',         label: 'Расчёт выполнил (ФИО)',            group: 'manual', shapeIds: [56], unit: null, notes: 'Дата проставляется автоматически текущим числом (дд/мм/гггг) — вводить не нужно' },
+      { key: 'journal_note',     label: 'Примечание (для журнала расчётов)', group: 'manual', shapeIds: [], unit: null, notes: 'Необязательно — короткая заметка для столбца «Примечание» в журнале расчётов (Google-таблица), в сам документ не попадает' },
 
       // --- Автозаполнение из спецификации BelTO (можно поправить руками) ---
       { key: 'model',
@@ -208,10 +209,11 @@ const TEMPLATES = [
       { key: 'site',             label: 'Место установки',                  group: 'manual', shapeIds: [], unit: null, notes: '' },
       { key: 'contact_person',   label: 'Фамилия И.О. (контактное лицо)',   group: 'manual', shapeIds: [], unit: null, notes: '' },
       { key: 'contact_info',     label: 'Телефон, факс, E-mail',            group: 'manual', shapeIds: [], unit: null, notes: '' },
-      { key: 'calc_number',      label: 'Номер расчёта',                    group: 'manual', shapeIds: [], unit: null, notes: 'Введите только номер — месяц и год подставятся автоматически по сегодняшней дате' },
+      { key: 'calc_number',      label: 'Номер расчёта',                    group: 'manual', shapeIds: [], unit: null, notes: 'Введите только номер — месяц и год подставятся автоматически по сегодняшней дате. После первого расчёта поле само подставляет следующий номер (из журнала) — можно менять вручную' },
       { key: 'price_unit',       label: 'Цена без НДС за единицу, руб',     group: 'manual', shapeIds: [], unit: 'руб', notes: '' },
       { key: 'price_total',      label: 'ИТОГО цена без НДС, руб',          group: 'manual', shapeIds: [], unit: 'руб', notes: '' },
       { key: 'executor',         label: 'Расчёт выполнил (ФИО)',            group: 'manual', shapeIds: [], unit: null, notes: 'Дата проставляется автоматически текущим числом' },
+      { key: 'journal_note',     label: 'Примечание (для журнала расчётов)', group: 'manual', shapeIds: [], unit: null, notes: 'Необязательно — короткая заметка для столбца «Примечание» в журнале расчётов (Google-таблица), в сам документ не попадает' },
 
       // В спецификации BelTO этих двух данных нет — вводит инженер вручную
       // (согласовано с пользователем 07.09.2026).
