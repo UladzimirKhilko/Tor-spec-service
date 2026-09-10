@@ -316,22 +316,162 @@ function initSpecModeToggle() {
       });
       dz2.hidden = specMode !== 'double';
       el('dropzoneHint').textContent = specMode === 'double'
-        ? 'Первая ступень — HTML-экспорт BelTO (расчёт как самостоятельного аппарата)'
+        ? 'Один из двух файлов ступени (расчёт как самостоятельного аппарата) — порядок загрузки не важен'
         : 'HTML-экспорт BelTO (точнее всего) / PDF (текстовый или скан) / JPG / PNG';
+      // Смена режима в любую сторону сбрасывает уже распознанные слоты
+      // режима "Два файла" — иначе, например, после успешной сборки
+      // моноблока и переключения назад на "Один файл" и снова на "Два
+      // файла" старые распознанные значения могли бы неожиданно
+      // подмешаться к новой паре файлов.
+      resetDoubleSpecSlots();
       if (specMode === 'single') {
         secondSpecFile = null;
         el('fileInput2').value = '';
+      } else {
+        el('fileInput').value = '';
       }
     });
   });
 }
 
-// Пока просто запоминает второй файл — сам разбор/слияние двух
-// спецификаций (определение ступеней, пересчёт пластин и т.п.) добавляется
-// отдельным шагом.
-function handleSecondSpecFile(file) {
+// Режим "Два файла": каждая ступень посчитана в BelTO как САМОСТОЯТЕЛЬНЫЙ
+// (обычный) аппарат и выгружена отдельным файлом — ни один из двух файлов
+// сам по себе не содержит признака "МоноБлок". Слот 1 — основной дропзон
+// (тот же #dropzone/#fileInput, что и в обычном режиме), слот 2 — второй
+// дропзон (#dropzone2/#fileInput2). Как только оба слота распознаны —
+// mergeAndRenderDoubleSpec() сшивает их в моноблок-значения (см.
+// mergeTwoStageSpecs, beltoParser.js) и рендерит форму по моноблочному
+// шаблону — независимо от того, в каком порядке инженер загрузил файлы
+// (какая из ступеней I, а какая II — определяется по температурам, а не по
+// порядку загрузки).
+let firstSpecValues = null;  // { values, debugMatches, method, text } — слот 1
+let secondSpecValues = null; // слот 2
+
+function resetDoubleSpecSlots() {
+  firstSpecValues = null;
+  secondSpecValues = null;
+}
+
+// Общая часть разбора одного файла спецификации в плоский словарь
+// source-значений — используется и обычным режимом (один файл), и каждым
+// из двух слотов режима "Два файла".
+async function parseSpecFile(file, onProgress) {
+  const { text, method, structured } = await extractTextFromFile(file, onProgress);
+  const { values, debugMatches } = parseBeltoText(text);
+  // Для HTML-отчёта (метод 'html-table') structured — точный разбор по
+  // ячейкам (среда, единицы измерения, см. extract.js) — сильнее общего
+  // построчного regex-разбора выше. Накладываем поверх, не перетирая уже
+  // найденное построчным разбором, если по ячейкам что-то не нашлось.
+  if (structured) {
+    Object.keys(structured).forEach((k) => {
+      if (structured[k]) values[k] = structured[k];
+    });
+  }
+  return { values, debugMatches, method, text };
+}
+
+async function handleFirstDoubleSpecFile(file) {
+  setStatus('parseStatus', `Обрабатываю первый файл: ${file.name}...`);
+  try {
+    const parsed = await parseSpecFile(file, (msg) => setStatus('parseStatus', msg));
+    parsed.values.__fileName = file.name;
+    firstSpecValues = parsed;
+    if (secondSpecValues) {
+      await mergeAndRenderDoubleSpec();
+    } else {
+      setStatus('parseStatus', `Файл «${file.name}» распознан — теперь загрузите файл второй ступени (второй дропзон ниже), чтобы собрать моноблок.`, 'ok');
+    }
+  } catch (err) {
+    console.error(err);
+    setStatus('parseStatus', 'Ошибка распознавания первого файла: ' + err.message, 'err');
+  }
+}
+
+async function handleSecondSpecFile(file) {
   secondSpecFile = file;
-  setStatus('parseStatus', `Файл II ступени «${file.name}» выбран — загрузите первый файл, чтобы продолжить.`);
+  setStatus('parseStatus', `Обрабатываю файл II слота: ${file.name}...`);
+  try {
+    const parsed = await parseSpecFile(file, (msg) => setStatus('parseStatus', msg));
+    parsed.values.__fileName = file.name;
+    secondSpecValues = parsed;
+    if (firstSpecValues) {
+      await mergeAndRenderDoubleSpec();
+    } else {
+      setStatus('parseStatus', `Файл «${file.name}» распознан — теперь загрузите первый файл (дропзон выше), чтобы собрать моноблок.`, 'ok');
+    }
+  } catch (err) {
+    console.error(err);
+    setStatus('parseStatus', 'Ошибка распознавания второго файла: ' + err.message, 'err');
+  }
+}
+
+// Сшивает два независимо распознанных "обычных" набора значений в единый
+// моноблок (mergeTwoStageSpecs, beltoParser.js) и рендерит форму по
+// моноблочному шаблону — тем же путём, что и обычный (одно-файловый)
+// моноблок в handleFile ниже.
+async function mergeAndRenderDoubleSpec() {
+  if (!customTplBytes) {
+    setStatus('parseStatus', 'Сначала загрузите PDF бланка (шаг 1) — без него не из чего распознать марку/исполнение и картинку теплообменника.', 'err');
+    return;
+  }
+  setStatus('parseStatus', 'Оба файла распознаны — собираю спецификацию моноблока...');
+  el('debugDetails').style.display = 'none';
+  try {
+    const merged = mergeTwoStageSpecs(firstSpecValues.values, secondSpecValues.values);
+    currentDebugMatches = [
+      ...(firstSpecValues.debugMatches || []),
+      ...(secondSpecValues.debugMatches || []),
+    ];
+
+    const monoblockTemplate = getTemplateById(MONOBLOCK_TEMPLATE_ID);
+    if (!monoblockTemplate) {
+      setStatus('parseStatus', 'Не найден шаблон моноблока (tor-monoblock-2xbgv) — обратитесь к разработчику.', 'err');
+      return;
+    }
+    if (currentTemplate.mode !== 'monoblock') {
+      currentTemplate.fields = monoblockTemplate.fields;
+      currentTemplate.docxFile = monoblockTemplate.file;
+      currentTemplate.mode = 'monoblock';
+      applyDefaultFieldValues(currentTemplate.fields);
+      await refreshCertificatesFromPdf(currentTemplate.fields);
+    }
+
+    // Марка (база) и исполнение — из PDF-бланка, как и в обычном режиме.
+    const modelParts = await getModelPartsForCurrentTemplate();
+    if (modelParts) {
+      merged.model_base = modelParts.base;
+      merged.model_execution = modelParts.execution;
+      currentFieldValues['title_model'] = modelParts.base;
+    } else {
+      currentFieldValues['title_model'] = '';
+    }
+
+    applyParsedValues(merged);
+    resolveDynamicUnits(merged);
+    currentFieldValues['calc_number'] = '';
+    renderForm();
+    suggestNextCalcNumber();
+
+    let statusMsg = `Готово — собран МОНОБЛОК из двух файлов (I ступень: «${merged.__stage1FileName}», II ступень: «${merged.__stage2FileName}», определено по температурам). Проверьте поля ниже перед генерацией.`;
+    if (!modelParts) {
+      statusMsg += ' ⚠ Не удалось распознать марку и исполнение теплообменника в PDF-бланке — заполните поле «Марка теплообменника» и проверьте заголовок документа вручную.';
+    }
+    setStatus('parseStatus', statusMsg, modelParts ? 'ok' : 'err');
+    el('debugDetails').style.display = '';
+    el('debugBox').textContent = currentDebugMatches.length
+      ? currentDebugMatches.map((m) => `[${m.keys.join(', ')}] <- "${m.line}"`).join('\n')
+      : 'Не удалось распознать ни одной известной строки в одном из файлов. Проверьте текст вручную или введите значения в форму сами.';
+
+    el('formSection').style.display = '';
+    el('actionsSection').style.display = '';
+    lastGeneratedLogFormat = null;
+    const journalBtn = el('btnAddToJournal');
+    if (journalBtn) journalBtn.style.display = 'none';
+    setStatus('journalStatus', '');
+  } catch (err) {
+    console.error(err);
+    setStatus('parseStatus', 'Ошибка объединения двух файлов в моноблок: ' + err.message, 'err');
+  }
 }
 
 // Марка/исполнение теплообменника (например "ТОР-15М/13" + "1х") — берутся
@@ -360,24 +500,19 @@ async function handleFile(file) {
     setStatus('parseStatus', 'Сначала загрузите PDF бланка (шаг 1) — без него не из чего распознать марку/исполнение и картинку теплообменника.', 'err');
     return;
   }
+  // Режим "Два файла" — этот (основной) дропзон принимает файл ОДНОЙ из
+  // ступеней (какая именно I/II — определяется позже, по температурам, не
+  // по порядку загрузки), а не готовую спецификацию для немедленного
+  // рендера — см. handleFirstDoubleSpecFile.
+  if (specMode === 'double') {
+    await handleFirstDoubleSpecFile(file);
+    return;
+  }
   setStatus('parseStatus', `Обрабатываю файл: ${file.name}...`);
   el('debugDetails').style.display = 'none';
   try {
-    const { text, method, structured } = await extractTextFromFile(file, (msg) => setStatus('parseStatus', msg));
-    const { values, debugMatches } = parseBeltoText(text);
+    const { values, debugMatches, method, text } = await parseSpecFile(file, (msg) => setStatus('parseStatus', msg));
     currentDebugMatches = debugMatches;
-
-    // Для HTML-отчёта (метод 'html-table') structured — точный разбор по
-    // ячейкам (среда, единицы измерения, см. extract.js) — сильнее общего
-    // построчного regex-разбора выше, где многословные названия ("Пар
-    // водяной", "Пропиленгликоль 40%") надёжно не разделить. Накладываем
-    // поверх, не перетирая уже найденное построчным разбором, если по
-    // ячейкам что-то не нашлось.
-    if (structured) {
-      Object.keys(structured).forEach((k) => {
-        if (structured[k]) values[k] = structured[k];
-      });
-    }
 
     // МОНОБЛОК (2хБГВ/3хБГВ): спецификация "МоноБлок" опознаётся автоматически
     // (is_monoblock, см. beltoParser.js/extract.js) — переключаем шаблон формы

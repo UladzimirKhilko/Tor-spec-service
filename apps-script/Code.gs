@@ -83,13 +83,27 @@ function doPost(e) {
     // запросе, что и строку журнала (одна кнопка "Добавить в журнал" на
     // стороне сотрудника). Если fileBase64 не передан — ничего не сохраняем,
     // старое поведение (только строка в таблице) не меняется.
+    //
+    // Сохранение файла обёрнуто в СВОЙ try/catch: строка в журнал уже
+    // добавлена (см. sheet.appendRow выше) и должна оставаться успешной,
+    // даже если сохранение на Диск упадёт — и Logger.log здесь обязателен,
+    // иначе ошибка проглатывается молча и не видна в "Выполнения" (это и
+    // была причина, по которой баг было тяжело диагностировать 09.09.2026 —
+    // ошибка есть, а в логе выполнения — просто "Выполнение завершено").
     let fileUrl = null;
+    let fileError = null;
     if (data.fileBase64) {
-      fileUrl = saveDocumentToDrive(data.date, data.fileName, data.fileBase64);
+      try {
+        fileUrl = saveDocumentToDrive(data.date, data.fileName, data.fileBase64);
+      } catch (fileErr) {
+        fileError = String(fileErr);
+        Logger.log('saveDocumentToDrive упал: ' + fileError);
+      }
     }
-    return ContentService.createTextOutput(JSON.stringify({ ok: true, fileUrl: fileUrl }))
+    return ContentService.createTextOutput(JSON.stringify({ ok: true, fileUrl: fileUrl, fileError: fileError }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
+    Logger.log('doPost упал (строка журнала не добавлена): ' + err);
     return ContentService.createTextOutput(JSON.stringify({ ok: false, error: String(err) }))
       .setMimeType(ContentService.MimeType.JSON);
   }

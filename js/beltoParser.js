@@ -471,3 +471,122 @@ function buildMonoblockModel(v) {
   const marking = blocks.map((b) => `(${b})`).join('+');
   return `${v.model_base}-${Math.round(parseFloat(v.plates_count))}-${v.model_execution} ${marking}`;
 }
+
+// ---------------------------------------------------------------------------
+// МОНОБЛОК ИЗ ДВУХ ОТДЕЛЬНЫХ ФАЙЛОВ (режим "Два файла" в app.js) — каждая
+// ступень считалась в BelTO как САМОСТОЯТЕЛЬНЫЙ (обычный, не-моноблочный)
+// аппарат и выгружена отдельным HTML/PDF файлом. В отличие от МОНОБЛОК-
+// спецификации выше (одна общая выгрузка с 4-колоночной шапкой "Cтупень |
+// I | II") здесь на входе — два НЕЗАВИСИМЫХ набора обычных source-значений
+// (после parseBeltoText для не-моноблочного текста, т.е. с обычными ключами
+// t_in_hot/t_in_cold/flow_hot/... без суффиксов ступеней). Эта функция сшивает
+// их в тот же вид (*_s1/*_s2), что ждут deriveMonoblockValues / buildMonoblockModel
+// / MONOBLOCK_VALUE_KEYS — дальше форма и генерация документа работают как
+// для обычного моноблока.
+//
+// Согласовано с пользователем (см. обсуждение):
+//  - I ступень — файл с НАИМЕНЬШЕЙ температурой на входе НАГРЕВАЕМОЙ
+//    (холодной) среды (обычно ~5°C, свежая вода); второй файл — II ступень.
+//  - Количество пластин марки = пластины II ступени + (пластины I ступени - 1).
+//  - Число ходов каждой ступени берётся НАПРЯМУЮ из её собственной
+//    спецификации (без эвристики "1|(N-1)", применяемой для одного общего файла).
+//  - Поверхность теплообмена = СУММА площадей обеих ступеней (в отличие от
+//    случая с одним файлом, где обе строки в спецификации — одна и та же
+//    физическая площадь общего пакета).
+function mergeTwoStageSpecs(valuesA, valuesB) {
+  const num = (x) => {
+    if (x === null || x === undefined || x === '') return NaN;
+    return typeof x === 'number' ? x : parseFloat(String(x).replace(',', '.'));
+  };
+  const has = (x) => Number.isFinite(num(x));
+
+  // I ступень — меньшая температура на входе нагреваемой (холодной) среды.
+  // Если у обоих файлов её не нашлось (нестандартная спецификация) — берём
+  // порядок загрузки как есть (первый файл = I ступень).
+  const aCold = num(valuesA.t_in_cold);
+  const bCold = num(valuesB.t_in_cold);
+  let stage1, stage2;
+  if (has(aCold) && has(bCold)) {
+    stage1 = aCold <= bCold ? valuesA : valuesB;
+    stage2 = aCold <= bCold ? valuesB : valuesA;
+  } else {
+    stage1 = valuesA;
+    stage2 = valuesB;
+  }
+  // Подстраховка/самопроверка: вход греющей среды у II ступени должен быть
+  // ВЫШЕ, чем у I (сетевая вода идёт по контуру II -> I, охлаждаясь) — если
+  // это не так, данные необычные, но не блокируем, только предупреждаем в консоли.
+  if (has(num(stage1.t_in_hot)) && has(num(stage2.t_in_hot)) && num(stage2.t_in_hot) < num(stage1.t_in_hot)) {
+    console.warn('mergeTwoStageSpecs: температура на входе греющей среды у определённой как II ступень ниже, чем у I — проверьте, что файлы не перепутаны местами (порядок определяется по наименьшей температуре нагреваемой среды на входе).');
+  }
+
+  const v = { is_monoblock: true };
+
+  ['hot', 'cold'].forEach((c) => {
+    v[`t_in_s1_${c}`] = stage1[`t_in_${c}`];
+    v[`t_in_s2_${c}`] = stage2[`t_in_${c}`];
+    v[`t_out_s1_${c}`] = stage1[`t_out_${c}`];
+    v[`t_out_s2_${c}`] = stage2[`t_out_${c}`];
+    v[`flow_s1_${c}`] = stage1[`flow_${c}`];
+    v[`flow_s2_${c}`] = stage2[`flow_${c}`];
+    v[`dp_s1_${c}`] = stage1[`dp_${c}`];
+    v[`dp_s2_${c}`] = stage2[`dp_${c}`];
+  });
+
+  v.heat_power_s1 = stage1.heat_power;
+  v.heat_power_s2 = stage2.heat_power;
+  v.surface_margin_s1 = stage1.surface_margin;
+  v.surface_margin_s2 = stage2.surface_margin;
+  v.heat_transfer_coef_actual_s1 = stage1.heat_transfer_coef_actual;
+  v.heat_transfer_coef_actual_s2 = stage2.heat_transfer_coef_actual;
+  v.heat_transfer_coef_required_s1 = stage1.heat_transfer_coef_required;
+  v.heat_transfer_coef_required_s2 = stage2.heat_transfer_coef_required;
+  v.channel_layout_s1 = stage1.channel_layout;
+  v.channel_layout_s2 = stage2.channel_layout;
+
+  v.flow_unit = stage2.flow_unit || stage1.flow_unit;
+  v.dp_unit = stage2.dp_unit || stage1.dp_unit;
+  v.heat_load_unit = stage2.heat_load_unit || stage1.heat_load_unit;
+  v.heat_medium_hot = stage2.heat_medium_hot || stage1.heat_medium_hot;
+  v.heat_medium_cold = stage2.heat_medium_cold || stage1.heat_medium_cold;
+  v.dn_hot = stage2.dn_hot || stage1.dn_hot;
+  v.dn_cold = stage2.dn_cold || stage1.dn_cold;
+  if (v.dn_hot !== undefined) v.dn = v.dn_hot;
+  v.mass_empty = stage2.mass_empty || stage1.mass_empty;
+  v.mass_filled = stage2.mass_filled || stage1.mass_filled;
+  v.model = stage2.model || stage1.model;
+
+  // Производные поля (температуры вход-выход по ступеням, коэффициенты
+  // "факт/необходимый", % запаса, разбивка нагрузки ГВС, точка излома
+  // графика) — та же логика, что и для одного файла с готовой моноблок-
+  // спецификацией.
+  deriveMonoblockValues(v);
+
+  // Поверхность теплообмена — здесь, В ОТЛИЧИЕ от случая с одним файлом, это
+  // ДВА физически разных пластинчатых пакета (два отдельных расчёта BelTO),
+  // поэтому суммируем, а не берём одно и то же число (перекрываем то, что
+  // уже (неверно для этого случая) посчитал deriveMonoblockValues выше).
+  if (has(stage1.heat_surface) || has(stage2.heat_surface)) {
+    const sum = (has(stage1.heat_surface) ? num(stage1.heat_surface) : 0) + (has(stage2.heat_surface) ? num(stage2.heat_surface) : 0);
+    v.heat_surface = formatFixed(sum, 2);
+  }
+
+  // Число ходов — напрямую из каждой ступени, без эвристики "1|(N-1)"
+  // (перекрываем то, что посчитал deriveMonoblockValues выше).
+  if (has(stage1.passes_count)) v.passes_s1 = String(Math.round(num(stage1.passes_count)));
+  if (has(stage2.passes_count)) v.passes_s2 = String(Math.round(num(stage2.passes_count)));
+
+  // Количество пластин марки = пластины II ступени + (пластины I ступени - 1)
+  // — общий для двух ступеней пакет, где перегородочная пластина между
+  // ступенями учтена в обеих спецификациях по отдельности.
+  if (has(stage1.plates_count) && has(stage2.plates_count)) {
+    v.plates_count = String(Math.round(num(stage2.plates_count) + (num(stage1.plates_count) - 1)));
+  } else {
+    v.plates_count = stage2.plates_count || stage1.plates_count;
+  }
+
+  v.__stage1FileName = stage1.__fileName || '';
+  v.__stage2FileName = stage2.__fileName || '';
+
+  return v;
+}
