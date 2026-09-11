@@ -42,6 +42,12 @@ const yFracToMm = (frac) => (frac * LETTERHEAD_PAGE.height) / PT_PER_MM;
 
 const el = (id) => document.getElementById(id);
 
+// Поле "Расчёт выполнил (ФИО)" по умолчанию заполняется этим именем — по
+// просьбе пользователя, т.к. с программой в основном работает именно этот
+// сотрудник и вводить ФИО каждый раз вручную не нужно. Поле остаётся полем
+// group:'manual' — редактируется как обычно, если расчёт делает кто-то другой.
+const DEFAULT_EXECUTOR_NAME = 'Носко Тамара';
+
 // Блок "Примечание" (сертификаты и т.п.) заранее заполняется текстом —
 // чтобы пользователь мог его сразу проверить и, если нужно, поправить, а не
 // начинать с пустого поля. По просьбе пользователя текст каждый раз
@@ -55,6 +61,9 @@ function applyDefaultFieldValues(fields) {
   currentFieldValues = {};
   if (fields.some((f) => f.key === 'certificates_note')) {
     currentFieldValues['certificates_note'] = DEFAULT_CERTIFICATES_TEXT;
+  }
+  if (fields.some((f) => f.key === 'executor')) {
+    currentFieldValues['executor'] = DEFAULT_EXECUTOR_NAME;
   }
 }
 
