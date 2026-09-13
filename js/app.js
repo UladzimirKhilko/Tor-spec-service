@@ -279,40 +279,21 @@ function initDropzone() {
   input.addEventListener('change', () => {
     if (input.files[0]) handleFile(input.files[0]);
   });
-
-  // Вторая ступень (режим "Две спецификации", моноблок из двух отдельных
-  // HTML-файлов) — тот же дропзон-паттерн, второй независимый слот.
-  // Сам разбор/слияние двух спецификаций — отдельная задача (в разработке);
-  // здесь пока только приём файла в UI.
-  const dz2 = el('dropzone2');
-  const input2 = el('fileInput2');
-  dz2.addEventListener('click', () => input2.click());
-  ['dragenter', 'dragover'].forEach((ev) =>
-    dz2.addEventListener(ev, (e) => { e.preventDefault(); dz2.classList.add('drag'); })
-  );
-  ['dragleave', 'drop'].forEach((ev) =>
-    dz2.addEventListener(ev, (e) => { e.preventDefault(); dz2.classList.remove('drag'); })
-  );
-  dz2.addEventListener('drop', (e) => {
-    const file = e.dataTransfer.files[0];
-    if (file) handleSecondSpecFile(file);
-  });
-  input2.addEventListener('change', () => {
-    if (input2.files[0]) handleSecondSpecFile(input2.files[0]);
-  });
 }
 
 // Режим загрузки спецификации: 'single' (как раньше, один файл — обычный
 // аппарат или уже готовый комбинированный моноблок-отчёт) или 'double'
-// (моноблок из ДВУХ независимых HTML-спецификаций — каждая ступень
-// считалась в BelTO как отдельный аппарат; см. обсуждение с пользователем).
-// PDF/скан для моноблока остаётся только в режиме 'single', как и раньше.
+// (моноблок из ДВУХ независимых спецификаций — каждая ступень считалась в
+// BelTO как отдельный аппарат). В режиме 'double' оба файла загружаются
+// ПО ОЧЕРЕДИ в то же самое окошко (#dropzone/#fileInput), что и в обычном
+// режиме — отдельного второго окошка нет (по просьбе пользователя, проще
+// не искать глазами второе окошко). Какой файл был первым, а какой вторым —
+// не важно: какая ступень I, а какая II, определяется автоматически по
+// температурам (см. mergeTwoStageSpecs, beltoParser.js).
 let specMode = 'single';
-let secondSpecFile = null;
 
 function initSpecModeToggle() {
   const toggle = el('specModeToggle');
-  const dz2 = el('dropzone2');
   toggle.querySelectorAll('.segmented-option').forEach((btn) => {
     btn.addEventListener('click', () => {
       const mode = btn.dataset.mode;
@@ -323,9 +304,9 @@ function initSpecModeToggle() {
         b.classList.toggle('active', active);
         b.setAttribute('aria-selected', active ? 'true' : 'false');
       });
-      dz2.hidden = specMode !== 'double';
+      el('doubleSlotsStatus').hidden = specMode !== 'double';
       el('dropzoneHint').textContent = specMode === 'double'
-        ? 'Один из двух файлов ступени (расчёт как самостоятельного аппарата) — порядок загрузки не важен'
+        ? 'Загрузите по очереди ОБА файла ступеней (каждый — расчёт как самостоятельного аппарата) в это же окошко — сначала один, потом другой; какая ступень I, а какая II, определяется автоматически'
         : 'HTML-экспорт BelTO (точнее всего) / PDF (текстовый или скан) / JPG / PNG';
       // Смена режима в любую сторону сбрасывает уже распознанные слоты
       // режима "Два файла" — иначе, например, после успешной сборки
@@ -333,21 +314,16 @@ function initSpecModeToggle() {
       // файла" старые распознанные значения могли бы неожиданно
       // подмешаться к новой паре файлов.
       resetDoubleSpecSlots();
-      if (specMode === 'single') {
-        secondSpecFile = null;
-        el('fileInput2').value = '';
-      } else {
-        el('fileInput').value = '';
-      }
+      el('fileInput').value = '';
     });
   });
 }
 
 // Режим "Два файла": каждая ступень посчитана в BelTO как САМОСТОЯТЕЛЬНЫЙ
 // (обычный) аппарат и выгружена отдельным файлом — ни один из двух файлов
-// сам по себе не содержит признака "МоноБлок". Слот 1 — основной дропзон
-// (тот же #dropzone/#fileInput, что и в обычном режиме), слот 2 — второй
-// дропзон (#dropzone2/#fileInput2). Как только оба слота распознаны —
+// сам по себе не содержит признака "МоноБлок". Оба файла загружаются ПО
+// ОЧЕРЕДИ в одно и то же окошко (#dropzone/#fileInput) — отдельного второго
+// окошка нет (по просьбе пользователя). Как только оба слота распознаны —
 // mergeAndRenderDoubleSpec() сшивает их в моноблок-значения (см.
 // mergeTwoStageSpecs, beltoParser.js) и рендерит форму по моноблочному
 // шаблону — независимо от того, в каком порядке инженер загрузил файлы
@@ -359,6 +335,29 @@ let secondSpecValues = null; // слот 2
 function resetDoubleSpecSlots() {
   firstSpecValues = null;
   secondSpecValues = null;
+  renderDoubleSlotsStatus();
+}
+
+// Отметка под окошком загрузки — какой файл(ы) уже загружены и распознаны
+// (зелёным, как остальные статусы "ok" в сервисе), по просьбе пользователя,
+// чтобы было видно прогресс без прокрутки вверх к общему статусу.
+function renderDoubleSlotsStatus() {
+  const s1 = el('doubleSlot1Status');
+  const s2 = el('doubleSlot2Status');
+  if (firstSpecValues) {
+    s1.textContent = `✓ Файл 1: «${firstSpecValues.values.__fileName}» — распознан`;
+    s1.className = 'status-line ok';
+  } else {
+    s1.textContent = 'Файл 1: ещё не загружен';
+    s1.className = 'status-line';
+  }
+  if (secondSpecValues) {
+    s2.textContent = `✓ Файл 2: «${secondSpecValues.values.__fileName}» — распознан`;
+    s2.className = 'status-line ok';
+  } else {
+    s2.textContent = 'Файл 2: ещё не загружен';
+    s2.className = 'status-line';
+  }
 }
 
 // Общая часть разбора одного файла спецификации в плоский словарь
@@ -379,38 +378,35 @@ async function parseSpecFile(file, onProgress) {
   return { values, debugMatches, method, text };
 }
 
-async function handleFirstDoubleSpecFile(file) {
-  setStatus('parseStatus', `Обрабатываю первый файл: ${file.name}...`);
-  try {
-    const parsed = await parseSpecFile(file, (msg) => setStatus('parseStatus', msg));
-    parsed.values.__fileName = file.name;
-    firstSpecValues = parsed;
-    if (secondSpecValues) {
-      await mergeAndRenderDoubleSpec();
-    } else {
-      setStatus('parseStatus', `Файл «${file.name}» распознан — теперь загрузите файл второй ступени (второй дропзон ниже), чтобы собрать моноблок.`, 'ok');
-    }
-  } catch (err) {
-    console.error(err);
-    setStatus('parseStatus', 'Ошибка распознавания первого файла: ' + err.message, 'err');
+// Принимает ОДИН файл, загруженный в общее окошко в режиме "Два файла", и
+// определяет, в какой слот он идёт: если оба слота уже были заполнены
+// (например инженер уже собрал один моноблок и грузит файлы следующего) —
+// текущая пара сбрасывается, и этот файл начинает НОВУЮ пару как слот 1;
+// иначе он идёт в первый ещё не заполненный слот. Как только заполнены оба —
+// сразу запускается сборка (mergeAndRenderDoubleSpec).
+async function handleDoubleSpecFile(file) {
+  if (firstSpecValues && secondSpecValues) {
+    resetDoubleSpecSlots();
   }
-}
-
-async function handleSecondSpecFile(file) {
-  secondSpecFile = file;
-  setStatus('parseStatus', `Обрабатываю файл II слота: ${file.name}...`);
+  const isFirstSlot = !firstSpecValues;
+  setStatus('parseStatus', `Обрабатываю файл: ${file.name}...`);
   try {
     const parsed = await parseSpecFile(file, (msg) => setStatus('parseStatus', msg));
     parsed.values.__fileName = file.name;
-    secondSpecValues = parsed;
-    if (firstSpecValues) {
+    if (isFirstSlot) {
+      firstSpecValues = parsed;
+    } else {
+      secondSpecValues = parsed;
+    }
+    renderDoubleSlotsStatus();
+    if (firstSpecValues && secondSpecValues) {
       await mergeAndRenderDoubleSpec();
     } else {
-      setStatus('parseStatus', `Файл «${file.name}» распознан — теперь загрузите первый файл (дропзон выше), чтобы собрать моноблок.`, 'ok');
+      setStatus('parseStatus', `Файл «${file.name}» распознан — загрузите в это же окошко файл второй ступени, чтобы собрать моноблок.`, 'ok');
     }
   } catch (err) {
     console.error(err);
-    setStatus('parseStatus', 'Ошибка распознавания второго файла: ' + err.message, 'err');
+    setStatus('parseStatus', 'Ошибка распознавания файла: ' + err.message, 'err');
   }
 }
 
@@ -509,12 +505,12 @@ async function handleFile(file) {
     setStatus('parseStatus', 'Сначала загрузите PDF бланка (шаг 1) — без него не из чего распознать марку/исполнение и картинку теплообменника.', 'err');
     return;
   }
-  // Режим "Два файла" — этот (основной) дропзон принимает файл ОДНОЙ из
-  // ступеней (какая именно I/II — определяется позже, по температурам, не
-  // по порядку загрузки), а не готовую спецификацию для немедленного
-  // рендера — см. handleFirstDoubleSpecFile.
+  // Режим "Два файла" — это же окошко принимает ОБА файла по очереди, каждый
+  // раз файл ОДНОЙ из ступеней (какая именно I/II — определяется позже, по
+  // температурам, не по порядку загрузки), а не готовую спецификацию для
+  // немедленного рендера — см. handleDoubleSpecFile.
   if (specMode === 'double') {
-    await handleFirstDoubleSpecFile(file);
+    await handleDoubleSpecFile(file);
     return;
   }
   setStatus('parseStatus', `Обрабатываю файл: ${file.name}...`);
