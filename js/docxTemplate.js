@@ -287,8 +287,23 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
     '<w:p><w:pPr><w:spacing w:after="0" w:before="0" w:line="240" w:lineRule="auto"/><w:jc w:val="center"/></w:pPr><w:r><w:rPr/><w:drawing>'
   );
 
-  function tightenRowHeight(marker, img, boxWpx, boxHpx, marginPt, minPt, maxTwips) {
+  // ВАЖНО: у нормального и монобблочного мастер-шаблонов РАЗНЫЙ исходный
+  // потолок строки под картинку 1 (r23: 4961 твипов у обычного, 4300 у
+  // монобблочного — см. templates/*.docx) — раньше сюда передавалось только
+  // одно число (4961), и для монобблочного шаблона строка от этого НИКОГДА
+  // не подгонялась под реальный размер картинки: искомая подстрока
+  // 'w:trHeight w:val="4961"...' в его XML просто не встречается, замена
+  // молча не срабатывала (замечено при разборе жалобы "поплыла вёрстка",
+  // сентябрь 2026 — реальный монобблочный расчёт с высоким чертежом мог
+  // упереться в этот неснятый запас и вместе с остальным содержимым не
+  // влезть на 1 страницу в MS Word, хотя в LibreOffice тот же файл
+  // укладывался). Теперь maxTwips может быть массивом кандидатов — берём
+  // первый, который реально встречается в XML этого шаблона.
+  function tightenRowHeight(marker, img, boxWpx, boxHpx, marginPt, minPt, maxTwipsCandidates) {
     if (!img) return;
+    const candidates = Array.isArray(maxTwipsCandidates) ? maxTwipsCandidates : [maxTwipsCandidates];
+    const maxTwips = candidates.find((v) => xml.includes(`w:trHeight w:val="${v}" w:hRule="atLeast"`));
+    if (maxTwips === undefined) return; // ни один кандидат не найден в этом шаблоне — не трогаем
     const [, hpx] = fitSize(img, boxWpx, boxHpx);
     const heightPt = (hpx * 72) / 96;
     const desiredPt = Math.max(minPt, heightPt + marginPt);
@@ -296,10 +311,10 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
     if (desiredTwips >= maxTwips) return; // уже на максимуме — менять нечего
     const from = `w:trHeight w:val="${maxTwips}" w:hRule="atLeast"`;
     const to = `w:trHeight w:val="${desiredTwips}" w:hRule="atLeast"`;
-    if (xml.includes(from)) xml = xml.replace(from, to);
+    xml = xml.replace(from, to);
   }
 
-  tightenRowHeight('diagram1', diagramImage, TARGET_WIDTH_PX, TARGET_HEIGHT_PX, 16, 60, 4961);
+  tightenRowHeight('diagram1', diagramImage, TARGET_WIDTH_PX, TARGET_HEIGHT_PX, 16, 60, [4961, 4300]);
   if (hasDiagram2) {
     // marginPt уменьшен (10 -> 6): раньше запас держали и под возможную
     // рамку картинки, и под погрешность вписывания — рамки у картинки
