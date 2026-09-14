@@ -62,6 +62,9 @@ function applyDefaultFieldValues(fields) {
   if (fields.some((f) => f.key === 'certificates_note')) {
     currentFieldValues['certificates_note'] = DEFAULT_CERTIFICATES_TEXT;
   }
+  if (fields.some((f) => f.key === 'port_legend_note')) {
+    currentFieldValues['port_legend_note'] = DEFAULT_PORT_LEGEND_TEXT;
+  }
   if (fields.some((f) => f.key === 'executor')) {
     currentFieldValues['executor'] = DEFAULT_EXECUTOR_NAME;
   }
@@ -71,17 +74,57 @@ function applyDefaultFieldValues(fields) {
 // напечатанный в этой области на загруженном PDF-бланке (customTplBytes).
 // Вызывается ПОСЛЕ applyDefaultFieldValues (тот уже поставил образец как
 // подстраховку) — если извлечение ничего не нашло/не удалось, образец
-// так и остаётся. Ничего не делает, если у текущего набора полей нет
-// certificates_note (шаблон без этого блока) или PDF-бланк ещё не загружен.
+// так и остаётся. Ничего не делает (и считается успехом — предупреждать не
+// о чем), если у текущего набора полей нет certificates_note (шаблон без
+// этого блока) или PDF-бланк ещё не загружен.
+// @returns {Promise<boolean>} - true, если поле не нужно ИЛИ текст реально
+//   распознан из PDF; false — если поле есть, но пришлось оставить
+//   запасной текст-образец (вызывающий код предупреждает об этом в статусе).
 async function refreshCertificatesFromPdf(fields) {
-  if (!fields.some((f) => f.key === 'certificates_note')) return;
-  if (!customTplBytes) return;
+  if (!fields.some((f) => f.key === 'certificates_note')) return true;
+  if (!customTplBytes) return true;
   try {
     const extracted = await extractCertificatesTextFromPdf(customTplBytes);
-    if (extracted) currentFieldValues['certificates_note'] = extracted;
+    if (extracted) { currentFieldValues['certificates_note'] = extracted; return true; }
+    return false;
   } catch (e) {
     console.warn('Не удалось обновить блок "Примечание" из PDF-бланка', e);
+    return false;
   }
+}
+
+// То же самое, но для нового блока "Назначение патрубков" (см. modelExtract.js:
+// extractPortLegendFromPdf) — текст списка патрубков справа от картинки
+// "Общий вид". Работает независимо от вырезки самой картинки (без рендера в
+// canvas, только текстовый слой) — можно вызывать сразу после загрузки
+// бланка, не дожидаясь handleUpdateDiagramPreview.
+// @returns {Promise<boolean>} - см. refreshCertificatesFromPdf.
+async function refreshPortLegendFromPdf(fields) {
+  if (!fields.some((f) => f.key === 'port_legend_note')) return true;
+  if (!customTplBytes) return true;
+  try {
+    const zones = await findDiagramZones(customTplBytes);
+    if (!zones || !zones.red) return false;
+    const legend = await extractPortLegendFromPdf(customTplBytes, zones.red);
+    if (legend && legend.text) { currentFieldValues['port_legend_note'] = legend.text; return true; }
+    return false;
+  } catch (e) {
+    console.warn('Не удалось обновить список патрубков из PDF-бланка', e);
+    return false;
+  }
+}
+
+// Собирает предупреждение для статус-строки, если один или оба
+// авто-извлекаемых из PDF текстовых блока (certificates_note, port_legend_note)
+// не распознались и остались с запасным текстом-образцом — по просьбе
+// пользователя сотрудник должен явно видеть это и проверить/дописать поле
+// вручную, а не только заметить расхождение в готовом документе.
+function buildAutoTextWarning(certOk, legendOk) {
+  const missing = [];
+  if (!certOk) missing.push('«Примечание»');
+  if (!legendOk) missing.push('«Назначение патрубков»');
+  if (!missing.length) return '';
+  return ` ⚠ Не удалось распознать в PDF-бланке текст для блока(ов): ${missing.join(', ')} — подставлен запасной текст-образец, проверьте и поправьте вручную перед генерацией.`;
 }
 
 /* ---------------- Загрузка своего бланка (самообслуживание, без разметки) ---------------- */
@@ -138,7 +181,8 @@ async function handleCustomTplUpload(file) {
     // handleFile переключит его на монобблочный, если понадобится (см. ниже).
     currentTemplate = { id: 'custom-letterhead', title: file.name, fields: TEMPLATES[0].fields, docxFile: NORMAL_LETTERHEAD_DOCX, mode: 'normal' };
     applyDefaultFieldValues(currentTemplate.fields);
-    await refreshCertificatesFromPdf(currentTemplate.fields);
+    const certOk = await refreshCertificatesFromPdf(currentTemplate.fields);
+    const legendOk = await refreshPortLegendFromPdf(currentTemplate.fields);
     renderForm();
     el('formSection').style.display = '';
     el('actionsSection').style.display = '';
@@ -152,12 +196,14 @@ async function handleCustomTplUpload(file) {
     el('offsetYInput').value = yFracToMm(customTplOffsetYFrac).toFixed(1);
     el('cropHeightInput').value = yFracToMm(customTplCropHeightFrac).toFixed(1);
 
+    const uploadWarning = buildAutoTextWarning(certOk, legendOk);
     setStatus(
       'customTplStatus',
-      existing
+      (existing
         ? `Бланк «${file.name}» уже открывали в этом браузере (сдвиг ${(existing.offsetXFrac || existing.offsetYFrac) ? 'сохранён' : 'не потребовался'}) — можно заполнять поля и генерировать Word.`
-        : `Бланк «${file.name}» загружен — можно заполнять поля и генерировать Word. Ниже показано превью вырезанной картинки теплообменника — если она съехала, поправьте сдвиг.`,
-      'ok'
+        : `Бланк «${file.name}» загружен — можно заполнять поля и генерировать Word. Ниже показано превью вырезанной картинки теплообменника — если она съехала, поправьте сдвиг.`
+      ) + uploadWarning,
+      uploadWarning ? 'err' : 'ok'
     );
     await handleUpdateDiagramPreview();
   } catch (err) {
@@ -183,13 +229,27 @@ async function getDiagramCrops(pdfBytes, offsetXFrac, offsetYFrac, cropHeightFra
   }
 
   if (zones && zones.red) {
-    const diagram1 = await cropZoneFromPdf(pdfBytes, zones.red, offsetXFrac);
+    // Список патрубков ("Т1 - вход греющей среды;" и т.п.) больше не должен
+    // попадать в саму картинку — он печатается отдельным полем справа (см.
+    // port_legend_note). Если на этом конкретном файле удалось найти, где
+    // проходит граница между чертежом и текстом (extractPortLegendFromPdf),
+    // вырезаем картинку ТОЛЬКО до этой границы; если нет — вырезаем зону
+    // целиком, как раньше (картинка просто впишется в суженную ячейку
+        // документа мельче, ничего не потеряется, см. docxTemplate.js).
+    let portLegend = null;
+    try {
+      portLegend = await extractPortLegendFromPdf(pdfBytes, zones.red);
+    } catch (e) {
+      console.warn('Не удалось определить границу картинки/текста в зоне "Общий вид"', e);
+    }
+    const diagram1XFrac1 = (portLegend && portLegend.splitXFrac) ? portLegend.splitXFrac : undefined;
+    const diagram1 = await cropZoneFromPdf(pdfBytes, zones.red, offsetXFrac, diagram1XFrac1);
     const diagram2 = zones.green ? await cropZoneFromPdf(pdfBytes, zones.green, offsetXFrac) : null;
-    return { diagram1, diagram2, autoDetected: true };
+    return { diagram1, diagram2, autoDetected: true, portLegendText: portLegend ? portLegend.text : null };
   }
 
   const diagram1 = await cropDiagramFromPdf(pdfBytes, offsetXFrac, offsetYFrac, cropHeightFrac);
-  return { diagram1, diagram2: null, autoDetected: false };
+  return { diagram1, diagram2: null, autoDetected: false, portLegendText: null };
 }
 
 // Показывает вырезанную из загруженного PDF картинку(и) теплообменника
@@ -206,11 +266,11 @@ async function handleUpdateDiagramPreview() {
   readOffsetInputs();
   setStatus('diagramPreviewStatus', 'Вырезаю картинку из PDF...');
   try {
-    const { diagram1, diagram2, autoDetected } = await getDiagramCrops(
+    const { diagram1, diagram2, autoDetected, portLegendText } = await getDiagramCrops(
       customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac
     );
     const key = `custom:${customTplHash}:${customTplOffsetXFrac}:${customTplOffsetYFrac}:${customTplCropHeightFrac}`;
-    cachedDiagramCrop = { key, diagram1, diagram2 };
+    cachedDiagramCrop = { key, diagram1, diagram2, portLegendText };
 
     showPreviewImage('diagramPreviewImg', diagram1);
     el('diagramPreviewLabel1').style.display = autoDetected ? '' : 'none';
@@ -433,12 +493,15 @@ async function mergeAndRenderDoubleSpec() {
       setStatus('parseStatus', 'Не найден шаблон моноблока (tor-monoblock-2xbgv) — обратитесь к разработчику.', 'err');
       return;
     }
+    let autoTextWarning = '';
     if (currentTemplate.mode !== 'monoblock') {
       currentTemplate.fields = monoblockTemplate.fields;
       currentTemplate.docxFile = monoblockTemplate.file;
       currentTemplate.mode = 'monoblock';
       applyDefaultFieldValues(currentTemplate.fields);
-      await refreshCertificatesFromPdf(currentTemplate.fields);
+      const certOk = await refreshCertificatesFromPdf(currentTemplate.fields);
+      const legendOk = await refreshPortLegendFromPdf(currentTemplate.fields);
+      autoTextWarning = buildAutoTextWarning(certOk, legendOk);
     }
 
     // Марка (база) и исполнение — из PDF-бланка, как и в обычном режиме.
@@ -461,7 +524,8 @@ async function mergeAndRenderDoubleSpec() {
     if (!modelParts) {
       statusMsg += ' ⚠ Не удалось распознать марку и исполнение теплообменника в PDF-бланке — заполните поле «Марка теплообменника» и проверьте заголовок документа вручную.';
     }
-    setStatus('parseStatus', statusMsg, modelParts ? 'ok' : 'err');
+    statusMsg += autoTextWarning;
+    setStatus('parseStatus', statusMsg, (modelParts && !autoTextWarning) ? 'ok' : 'err');
     el('debugDetails').style.display = '';
     el('debugBox').textContent = currentDebugMatches.length
       ? currentDebugMatches.map((m) => `[${m.keys.join(', ')}] <- "${m.line}"`).join('\n')
@@ -527,18 +591,23 @@ async function handleFile(file) {
     // на обычном наборе полей и просто предупреждаем в статусе ниже.
     const wantMonoblock = !!values.is_monoblock;
     const monoblockTemplate = getTemplateById(MONOBLOCK_TEMPLATE_ID);
+    let autoTextWarning = '';
     if (wantMonoblock && monoblockTemplate && currentTemplate.mode !== 'monoblock') {
       currentTemplate.fields = monoblockTemplate.fields;
       currentTemplate.docxFile = monoblockTemplate.file;
       currentTemplate.mode = 'monoblock';
       applyDefaultFieldValues(currentTemplate.fields);
-      await refreshCertificatesFromPdf(currentTemplate.fields);
+      const certOk = await refreshCertificatesFromPdf(currentTemplate.fields);
+      const legendOk = await refreshPortLegendFromPdf(currentTemplate.fields);
+      autoTextWarning = buildAutoTextWarning(certOk, legendOk);
     } else if (!wantMonoblock && currentTemplate.mode !== 'normal') {
       currentTemplate.fields = TEMPLATES[0].fields;
       currentTemplate.docxFile = NORMAL_LETTERHEAD_DOCX;
       currentTemplate.mode = 'normal';
       applyDefaultFieldValues(currentTemplate.fields);
-      await refreshCertificatesFromPdf(currentTemplate.fields);
+      const certOk = await refreshCertificatesFromPdf(currentTemplate.fields);
+      const legendOk = await refreshPortLegendFromPdf(currentTemplate.fields);
+      autoTextWarning = buildAutoTextWarning(certOk, legendOk);
     }
     if (wantMonoblock) deriveMonoblockValues(values);
 
@@ -582,7 +651,8 @@ async function handleFile(file) {
     if (!modelParts) {
       statusMsg += ' ⚠ Не удалось распознать марку и исполнение теплообменника в PDF-бланке — заполните поле «Марка теплообменника» и проверьте заголовок документа вручную.';
     }
-    setStatus('parseStatus', statusMsg, modelParts ? 'ok' : 'err');
+    statusMsg += autoTextWarning;
+    setStatus('parseStatus', statusMsg, (modelParts && !autoTextWarning) ? 'ok' : 'err');
     el('debugDetails').style.display = '';
     el('debugBox').textContent = debugMatches.length
       ? debugMatches.map((m) => `[${m.keys.join(', ')}] <- "${m.line}"`).join('\n')
@@ -817,7 +887,7 @@ function buildLetterheadValues() {
 // Кэш вырезанной картинки(картинок) теплообменника — по ключу (файл бланка
 // + сдвиг), чтобы не перевырезать их из PDF при каждом клике "Скачать",
 // если ничего не поменялось с прошлого раза.
-let cachedDiagramCrop = null; // { key, diagram1, diagram2 }
+let cachedDiagramCrop = null; // { key, diagram1, diagram2, portLegendText }
 
 async function handleGenerateCustomDocx() {
   if (!customTplBytes) {
@@ -837,10 +907,13 @@ async function handleGenerateCustomDocx() {
       const crops = await getDiagramCrops(customTplBytes, customTplOffsetXFrac, customTplOffsetYFrac, customTplCropHeightFrac);
       diagram1 = crops.diagram1;
       diagram2 = crops.diagram2;
-      cachedDiagramCrop = { key, diagram1, diagram2 };
+      cachedDiagramCrop = { key, diagram1, diagram2, portLegendText: crops.portLegendText };
     }
     const templateBytes = await getDocxTemplateBytes(currentTemplate.docxFile || NORMAL_LETTERHEAD_DOCX);
-    const bytes = await fillDocxTemplate(templateBytes, values, currentFieldValues['certificates_note'] || '', diagram1, diagram2);
+    const bytes = await fillDocxTemplate(
+      templateBytes, values, currentFieldValues['certificates_note'] || '', diagram1, diagram2,
+      currentFieldValues['port_legend_note'] || ''
+    );
     const filename = buildOutputFilename('docx');
     downloadDocxBytes(bytes, filename);
     setStatus('genStatus', `Скачан файл ${filename}`, 'ok');

@@ -194,14 +194,21 @@ async function cropDiagramFromPdf(pdfBytes, offsetXFrac, offsetYFrac, heightFrac
  * @param {ArrayBuffer} pdfBytes
  * @param {{yFrac0:number, yFrac1:number}} zone
  * @param {number} [offsetXFrac] - ручная поправка по X, как у cropDiagramFromPdf
+ * @param {number} [xFrac1Override] - правая граница вырезки (доля ширины
+ *   страницы), если её нужно сузить относительно полной ширины DIAGRAM_BOX —
+ *   используется для зоны "Общий вид", чтобы вырезать только сам чертёж, не
+ *   захватывая список патрубков справа (см. extractPortLegendFromPdf,
+ *   modelExtract.js, и getDiagramCrops в app.js). Если не задано (undefined/
+ *   null) — берётся правая граница DIAGRAM_BOX целиком, как раньше.
  * @returns {Promise<{bytes: Uint8Array, widthPx: number, heightPx: number}>}
  */
-async function cropZoneFromPdf(pdfBytes, zone, offsetXFrac) {
+async function cropZoneFromPdf(pdfBytes, zone, offsetXFrac, xFrac1Override) {
   const dx = offsetXFrac || 0;
   const canvas = await renderPdfPageToCanvas(pdfBytes);
   const box = DIAGRAM_BOX;
+  const rightXFrac = (xFrac1Override === undefined || xFrac1Override === null) ? box.xFrac1 : xFrac1Override;
   const x0 = (box.xFrac0 + dx) * canvas.width;
-  const x1 = (box.xFrac1 + dx) * canvas.width;
+  const x1 = (rightXFrac + dx) * canvas.width;
   const y0 = zone.yFrac0 * canvas.height;
   const y1 = zone.yFrac1 * canvas.height;
   const cropCanvas = trimBorderFromCanvas(cropCanvasZone(canvas, x0, x1, y0, y1));

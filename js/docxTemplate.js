@@ -136,9 +136,12 @@ function estimateCertificatesNoteHeightPt(text) {
  *   картинка "Компоновка пластин в теплообменнике" — только у многоходовых
  *   моделей (2х, 2хЦ, 3х и т.п.); null/undefined — блок в документе не
  *   появится вовсе (заголовок + место под картинку не занимают места).
+ * @param {string} [portLegendText] - сырой текст блока "Назначение
+ *   патрубков" (с \n) — печатается отдельным полем справа от (суженной)
+ *   картинки "Общий вид", тем же способом (RAW XML), что и certificates_note.
  * @returns {Promise<Uint8Array>}
  */
-async function fillDocxTemplate(templateBytes, values, certificatesNoteText, diagramImage, diagram2Image) {
+async function fillDocxTemplate(templateBytes, values, certificatesNoteText, diagramImage, diagram2Image, portLegendText) {
   if (!diagramImage || !diagramImage.bytes || !diagramImage.bytes.length) {
     throw new Error('Нет картинки теплообменника — сначала загрузите бланк с картинкой (см. шаг 1) или дождитесь автовырезки.');
   }
@@ -168,7 +171,20 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
   // не как в оригинале). Теперь длина текста меряется заранее
   // (estimateCertificatesNoteHeightPt) и картинка ужимается только на
   // столько, на сколько текст реально "съел" запас.
-  const TARGET_WIDTH_PT = 530;
+  // ВАЖНО: ширина картинки "Общий вид" уменьшена (530 -> 340) — по просьбе
+  // пользователя список патрубков ("Т1 - вход греющей среды;" и т.п.),
+  // который раньше был запечён в саму картинку, теперь печатается отдельным
+  // редактируемым полем справа от неё, в той же ячейке таблицы (см.
+  // port_legend_note ниже и templates/BSI-letterhead-template.docx /
+  // BSI-letterhead-monoblock-template.docx — строка "Общий вид" в обоих
+  // мастер-шаблонах разбита на две ячейки: картинка (7087 из 10773 dxa,
+  // ~340pt с учётом полей ячейки) и текст (3686 dxa, та же ширина колонки,
+  // что и у блока "Примечание"). Сама вырезка картинки (getDiagramCrops,
+  // app.js) уже не включает область текста — но даже если авто-определение
+  // границы не сработало (редкий случай — cropZoneFromPdf вернёт зону
+  // целиком, с текстом внутри), картинка всё равно впишется в эту суженную
+  // ширину, просто мельче.
+  const TARGET_WIDTH_PT = 340;
   const TARGET_HEIGHT_PT = 240;
   // Целевая высота для картинки 2 больше не должна быть узким местом:
   // после того как cropZoneFromPdf/cropDiagramFromPdf стали обрезать
@@ -233,6 +249,7 @@ async function fillDocxTemplate(templateBytes, values, certificatesNoteText, dia
 
   const data = { ...values };
   data.certificates_note = buildCertificatesRawXml(certificatesNoteText);
+  data.port_legend_note = buildCertificatesRawXml(portLegendText, { fontSize: 8 });
   data.diagram_image = 'diagram';
   data.has_diagram2 = hasDiagram2;
   if (hasDiagram2) data.diagram2_image = 'diagram2';

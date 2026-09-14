@@ -232,3 +232,123 @@ async function extractCertificatesTextFromPdf(pdfBytes) {
     return null;
   }
 }
+
+/*
+ * Извлекает текст списка патрубков ("Т1 - вход греющей среды;" и т.п.),
+ * напечатанного справа от чертежа в зоне "Общий вид теплообменника" — по
+ * тому же принципу, что и extractCertificatesTextFromPdf для блока
+ * "Примечание": текст берётся из текстового слоя КОНКРЕТНОГО загруженного
+ * PDF-бланка (а не подставляется один и тот же образец), чтобы работать для
+ * любой модели этой линейки (разное число патрубков и формулировки у
+ * обычных и моноблочных аппаратов).
+ *
+ * Заодно определяет ГОРИЗОНТАЛЬНУЮ границу между самим чертежом (слева) и
+ * этим текстом (справа) на этой странице — она нужна вызывающему коду
+ * (app.js -> getDiagramCrops), чтобы вырезать в картинку ТОЛЬКО чертёж, не
+ * захватывая текст (по просьбе пользователя: текст должен стать отдельным
+ * редактируемым полем, а не оставаться "запечённым" в картинке).
+ *
+ * Строки-легенда опознаются по шаблону "<код патрубка> - <вход/выход> ...":
+ * код патрубка — Т/В (кириллица) + 1-2 цифры (Т1, Т2, В1, Т22 и т.п.),
+ * дальше тире и слово "вход"/"выход". Подписи на самом чертеже (одиночные
+ * "Т1"/"Т3" без тире рядом) под этот шаблон не попадают — их пропускаем,
+ * чтобы не занизить границу зоны текста.
+ *
+ * @param {ArrayBuffer} pdfBytes
+ * @param {{yFrac0:number, yFrac1:number}} zone - зона "Общий вид" (тот же
+ *   диапазон по Y, что и у findDiagramZones().red)
+ * @returns {Promise<{text: string, splitXFrac: number} | null>}
+ */
+async function extractPortLegendFromPdf(pdfBytes, zone) {
+  if (!zone) return null;
+  try {
+    const pdf = await pdfjsLib.getDocument({ data: pdfBytes.slice(0) }).promise;
+    const page = await pdf.getPage(1);
+    const content = await page.getTextContent();
+    const viewport = page.getViewport({ scale: 1 });
+    const pageWidth = viewport.width;
+    const pageHeight = viewport.height;
+
+    // ВАЖНО: фильтруем не только по Y (зона "Общий вид"), но и по X — берём
+    // только правую половину страницы. На всех проверенных бланках список
+    // патрубков напечатан заметно правее середины (xFrac ~0.62-0.68), а вот
+    // на ЛЕВОЙ половине в той же зоне по высоте нередко оказываются другие
+    // надписи чертежа (подписи патрубков прямо на картинке — одиночные "Т1"/
+    // "В1" и т.п. — и декоративный вертикальный штамп с "битой" кодировкой),
+    // которые могут случайно оказаться на той же строке (Y с допуском), что
+    // и нужная строка легенды, и испортить её (регэксп строки легенды тогда
+    // не совпадает, а вырезка теряет строку целиком — так и проявлялся баг:
+    // из 4 строк "Т1.../Т2.../В1.../Т3..." находились только 2). Без этого
+    // фильтра дешевле и надёжнее, чем гадать точную границу заранее — она
+    // как раз и есть то, что эта функция определяет.
+    const items = content.items
+      .filter((it) => it.str && it.str.trim() !== '')
+      .map((it) => ({
+        str: it.str,
+        x: it.transform[4],
+        y: it.transform[5],
+        h: Math.abs(it.transform[3]) || 10,
+        w: it.width || 0,
+      }))
+      .filter((it) => {
+        const topFrac = (pageHeight - (it.y + it.h)) / pageHeight;
+        const xFrac = it.x / pageWidth;
+        return topFrac >= zone.yFrac0 && topFrac <= zone.yFrac1 && xFrac >= 0.55;
+      });
+    if (!items.length) return null;
+
+    const yTol = 2;
+    const lines = [];
+    items.forEach((it) => {
+      let line = lines.find((l) => Math.abs(l.y - it.y) < yTol);
+      if (!line) { line = { y: it.y, items: [] }; lines.push(line); }
+      line.items.push(it);
+    });
+    lines.sort((a, b) => b.y - a.y);
+    lines.forEach((l) => l.items.sort((a, b) => a.x - b.x));
+
+    // lines уже отсортированы сверху вниз (b.y - a.y, см. выше). Строка
+    // легенды опознаётся по коду патрубка в начале; строка БЕЗ такого кода,
+    // идущая сразу за уже опознанной строкой (перенос длинной формулировки,
+    // например "...воды из" / "системы ГВС;" у моноблочных бланков — см.
+    // выборку 2хЦ/2хБГВ), приклеивается к ней, а не теряется. "Сразу за" —
+    // разрыв по Y не больше ~2.5 высоты строки (typicalGap), иначе это,
+    // скорее всего, не перенос, а что-то постороннее — такую строку просто
+    // пропускаем, не рискуя склеить с чужим текстом.
+    const portLineRe = /^[ТTВB]\d{1,2}\s*-\s*(вход|выход)/i;
+    const entries = [];
+    let minX = null;
+    let prevY = null;
+    lines.forEach((l) => {
+      let s = '';
+      let prevEnd = null;
+      l.items.forEach((it) => {
+        if (prevEnd !== null && it.x - prevEnd > 1.5) s += ' ';
+        s += it.str;
+        prevEnd = it.x + it.w;
+      });
+      s = s.trim();
+      if (!s) return;
+      const typicalGap = (l.items[0] && l.items[0].h) ? l.items[0].h * 2.5 : 30;
+      if (portLineRe.test(s)) {
+        entries.push(s);
+        if (minX === null || l.items[0].x < minX) minX = l.items[0].x;
+        prevY = l.y;
+      } else if (entries.length && prevY !== null && (prevY - l.y) <= typicalGap) {
+        entries[entries.length - 1] += ' ' + s;
+        prevY = l.y;
+      }
+    });
+    if (!entries.length || minX === null) return null;
+
+    const text = fixDegreeArtifacts(entries.join('\n')).trim();
+    if (!text) return null;
+
+    const pad = 3; // небольшой запас влево, чтобы не обрезать первую букву кода патрубка
+    const splitXFrac = Math.max(0, Math.min(1, (minX - pad) / pageWidth));
+    return { text, splitXFrac };
+  } catch (e) {
+    console.warn('Не удалось извлечь список патрубков из PDF-бланка', e);
+    return null;
+  }
+}
